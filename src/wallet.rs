@@ -1,10 +1,15 @@
 use std::fmt;
-use std::ops::Add;
+use std::ops::{Add, Sub};
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-/// Monetary value stored as whole cents to avoid floating-point issues.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+// ── Money ────────────────────────────────────────────────────────
+
+/// Monetary value stored as whole cents to avoid floating-point precision issues.
+///
+/// This is a value object — immutable, comparable, and safe for arithmetic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Money(u64);
 
 impl Money {
@@ -33,14 +38,29 @@ impl Add for Money {
     }
 }
 
+impl Sub for Money {
+    type Output = Self;
+
+    /// Panics if subtraction would underflow. Callers must validate first.
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self(
+            self.0
+                .checked_sub(rhs.0)
+                .expect("Money subtraction underflow"),
+        )
+    }
+}
+
 impl fmt::Display for Money {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}.{:02}", self.0 / 100, self.0 % 100)
     }
 }
 
-/// Transaction types matching the Java service contract.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// ── TransactionType ──────────────────────────────────────────────
+
+/// Transaction types matching the Java service wire contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TransactionType {
     TopUp,
     Withdraw,
@@ -54,16 +74,24 @@ pub enum TransactionType {
 impl TransactionType {
     pub fn as_str(&self) -> &'static str {
         match self {
-            TransactionType::TopUp => "TOP_UP",
-            TransactionType::Withdraw => "WITHDRAW",
-            TransactionType::Hold => "HOLD",
-            TransactionType::Release => "RELEASE",
-            TransactionType::Convert => "CONVERT",
-            TransactionType::Bid => "BID",
-            TransactionType::CancelBid => "CANCEL_BID",
+            Self::TopUp => "TOP_UP",
+            Self::Withdraw => "WITHDRAW",
+            Self::Hold => "HOLD",
+            Self::Release => "RELEASE",
+            Self::Convert => "CONVERT",
+            Self::Bid => "BID",
+            Self::CancelBid => "CANCEL_BID",
         }
     }
 }
+
+impl fmt::Display for TransactionType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+// ── WalletError ──────────────────────────────────────────────────
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum WalletError {
@@ -75,7 +103,9 @@ pub enum WalletError {
     InsufficientHeldBalance,
 }
 
-/// A record of a single wallet mutation.
+// ── WalletTransaction ────────────────────────────────────────────
+
+/// Immutable record of a single wallet mutation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WalletTransaction {
     pub id: String,
@@ -95,7 +125,13 @@ impl WalletTransaction {
     }
 }
 
-/// Core wallet domain entity with active and held balances.
+// ── Wallet ───────────────────────────────────────────────────────
+
+/// Core wallet domain entity.
+///
+/// Encapsulates active and held balances with domain-level validation.
+/// Every mutating method returns a `WalletTransaction` receipt on success,
+/// enabling the service layer to persist the audit trail independently.
 #[derive(Debug, Clone)]
 pub struct Wallet {
     id: String,
@@ -105,6 +141,7 @@ pub struct Wallet {
 }
 
 impl Wallet {
+    /// Create a brand-new wallet with zero balances.
     pub fn new(user_id: &str) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
@@ -113,6 +150,23 @@ impl Wallet {
             held_balance: Money::zero(),
         }
     }
+
+    /// Reconstruct a wallet from persisted data.
+    pub fn with_balances(
+        id: String,
+        user_id: String,
+        active_balance: Money,
+        held_balance: Money,
+    ) -> Self {
+        Self {
+            id,
+            user_id,
+            active_balance,
+            held_balance,
+        }
+    }
+
+    // ── Accessors ────────────────────────────────────────────────
 
     pub fn id(&self) -> &str {
         &self.id
@@ -130,69 +184,76 @@ impl Wallet {
         self.held_balance
     }
 
+    // ── Balance operations ───────────────────────────────────────
+
     pub fn top_up(&mut self, amount: Money) -> Result<WalletTransaction, WalletError> {
-        if amount.is_zero() {
-            return Err(WalletError::InvalidAmount);
-        }
+        Self::validate_positive(amount)?;
         self.active_balance = self.active_balance + amount;
-        Ok(WalletTransaction::new(&self.user_id, TransactionType::TopUp, amount))
+        Ok(self.record(TransactionType::TopUp, amount))
     }
 
     pub fn withdraw(&mut self, amount: Money) -> Result<WalletTransaction, WalletError> {
-        if amount.is_zero() {
-            return Err(WalletError::InvalidAmount);
-        }
-        if self.active_balance < amount {
-            return Err(WalletError::InsufficientActiveBalance);
-        }
-        self.active_balance = Money::from_cents(self.active_balance.cents() - amount.cents());
-        Ok(WalletTransaction::new(&self.user_id, TransactionType::Withdraw, amount))
+        Self::validate_positive(amount)?;
+        self.require_active_balance(amount)?;
+        self.active_balance = self.active_balance - amount;
+        Ok(self.record(TransactionType::Withdraw, amount))
     }
 
     pub fn hold(&mut self, amount: Money) -> Result<WalletTransaction, WalletError> {
-        if amount.is_zero() {
-            return Err(WalletError::InvalidAmount);
-        }
-        if self.active_balance < amount {
-            return Err(WalletError::InsufficientActiveBalance);
-        }
-        self.active_balance = Money::from_cents(self.active_balance.cents() - amount.cents());
+        Self::validate_positive(amount)?;
+        self.require_active_balance(amount)?;
+        self.active_balance = self.active_balance - amount;
         self.held_balance = self.held_balance + amount;
-        Ok(WalletTransaction::new(&self.user_id, TransactionType::Hold, amount))
+        Ok(self.record(TransactionType::Hold, amount))
     }
 
     pub fn release(&mut self, amount: Money) -> Result<WalletTransaction, WalletError> {
-        if amount.is_zero() {
-            return Err(WalletError::InvalidAmount);
-        }
-        if self.held_balance < amount {
-            return Err(WalletError::InsufficientHeldBalance);
-        }
-        self.held_balance = Money::from_cents(self.held_balance.cents() - amount.cents());
+        Self::validate_positive(amount)?;
+        self.require_held_balance(amount)?;
+        self.held_balance = self.held_balance - amount;
         self.active_balance = self.active_balance + amount;
-        Ok(WalletTransaction::new(&self.user_id, TransactionType::Release, amount))
+        Ok(self.record(TransactionType::Release, amount))
     }
 
     pub fn convert(&mut self, amount: Money) -> Result<WalletTransaction, WalletError> {
-        if amount.is_zero() {
-            return Err(WalletError::InvalidAmount);
-        }
-        if self.held_balance < amount {
-            return Err(WalletError::InsufficientHeldBalance);
-        }
-        self.held_balance = Money::from_cents(self.held_balance.cents() - amount.cents());
-        Ok(WalletTransaction::new(&self.user_id, TransactionType::Convert, amount))
+        Self::validate_positive(amount)?;
+        self.require_held_balance(amount)?;
+        self.held_balance = self.held_balance - amount;
+        Ok(self.record(TransactionType::Convert, amount))
     }
 
     pub fn bid(&mut self, amount: Money) -> Result<WalletTransaction, WalletError> {
+        Self::validate_positive(amount)?;
+        self.require_active_balance(amount)?;
+        self.active_balance = self.active_balance - amount;
+        self.held_balance = self.held_balance + amount;
+        Ok(self.record(TransactionType::Bid, amount))
+    }
+
+    // ── Private helpers (DRY) ────────────────────────────────────
+
+    fn validate_positive(amount: Money) -> Result<(), WalletError> {
         if amount.is_zero() {
             return Err(WalletError::InvalidAmount);
         }
+        Ok(())
+    }
+
+    fn require_active_balance(&self, amount: Money) -> Result<(), WalletError> {
         if self.active_balance < amount {
             return Err(WalletError::InsufficientActiveBalance);
         }
-        self.active_balance = Money::from_cents(self.active_balance.cents() - amount.cents());
-        self.held_balance = self.held_balance + amount;
-        Ok(WalletTransaction::new(&self.user_id, TransactionType::Bid, amount))
+        Ok(())
+    }
+
+    fn require_held_balance(&self, amount: Money) -> Result<(), WalletError> {
+        if self.held_balance < amount {
+            return Err(WalletError::InsufficientHeldBalance);
+        }
+        Ok(())
+    }
+
+    fn record(&self, tx_type: TransactionType, amount: Money) -> WalletTransaction {
+        WalletTransaction::new(&self.user_id, tx_type, amount)
     }
 }

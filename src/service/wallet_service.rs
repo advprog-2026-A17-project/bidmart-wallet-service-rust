@@ -1,6 +1,8 @@
 use sqlx::SqlitePool;
 
-use crate::persistence::repositories::{TransactionRepository, WalletRepository};
+use crate::persistence::repositories::{
+    ProvisioningEventRepository, TransactionRepository, WalletRepository,
+};
 use crate::wallet::{Money, Wallet, WalletError, WalletTransaction};
 
 // ── ServiceError ────────────────────────────────────────────────
@@ -49,13 +51,15 @@ impl std::fmt::Display for ServiceError {
 pub struct WalletService {
     wallet_repo: WalletRepository,
     tx_repo: TransactionRepository,
+    prov_repo: ProvisioningEventRepository,
 }
 
 impl WalletService {
     pub fn new(pool: SqlitePool) -> Self {
         Self {
             wallet_repo: WalletRepository::new(pool.clone()),
-            tx_repo: TransactionRepository::new(pool),
+            tx_repo: TransactionRepository::new(pool.clone()),
+            prov_repo: ProvisioningEventRepository::new(pool),
         }
     }
 
@@ -126,12 +130,65 @@ impl WalletService {
         Ok(())
     }
 
+    // ── Provisioning ─────────────────────────────────────────────
+
+    /// Provision a wallet from an external auth event. Idempotent by event_id.
+    pub async fn provision_wallet(
+        &self,
+        event_id: &str,
+        user_id: &str,
+        email: &str,
+        source: &str,
+    ) -> Result<(), ServiceError> {
+        // Idempotency: skip if this event was already processed
+        if self.prov_repo.exists(event_id).await? {
+            return Ok(());
+        }
+
+        // Only create a wallet if the user doesn't already have one
+        if self.wallet_repo.find_by_user_id(user_id).await?.is_none() {
+            let wallet = Wallet::new(user_id);
+            self.wallet_repo.insert(&wallet).await?;
+        }
+
+        // Record the event
+        let now = chrono::Utc::now().to_rfc3339();
+        self.prov_repo
+            .insert(event_id, user_id, email, &now, source)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Reconcile provisioning events by creating wallets for any
+    /// provisioned users that don't yet have one.
+    pub async fn reconcile_provisioned_wallets(
+        &self,
+        batch_size: i64,
+    ) -> Result<usize, ServiceError> {
+        let limit = if batch_size <= 0 { 100 } else { batch_size };
+        let events = self.prov_repo.find_recent(limit).await?;
+
+        let mut created = 0;
+        for event in &events {
+            if self
+                .wallet_repo
+                .find_by_user_id(&event.user_id)
+                .await?
+                .is_none()
+            {
+                let wallet = Wallet::new(&event.user_id);
+                self.wallet_repo.insert(&wallet).await?;
+                created += 1;
+            }
+        }
+
+        Ok(created)
+    }
+
     // ── Private: DRY mutation helper ─────────────────────────────
 
     /// Fetch → apply domain operation → persist transaction + wallet.
-    ///
-    /// Eliminates the repetitive find-mutate-save-update pattern from
-    /// every balance operation.
     async fn mutate_wallet(
         &self,
         user_id: &str,

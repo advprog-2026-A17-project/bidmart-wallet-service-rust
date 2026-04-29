@@ -83,6 +83,22 @@ impl TransactionType {
             Self::CancelBid => "CANCEL_BID",
         }
     }
+
+    /// Parse a wire-format string back into a `TransactionType`.
+    ///
+    /// Panics on unknown values — only valid DB data should reach here.
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "TOP_UP" => Self::TopUp,
+            "WITHDRAW" => Self::Withdraw,
+            "HOLD" => Self::Hold,
+            "RELEASE" => Self::Release,
+            "CONVERT" => Self::Convert,
+            "BID" => Self::Bid,
+            "CANCEL_BID" => Self::CancelBid,
+            other => panic!("unknown transaction type: {other}"),
+        }
+    }
 }
 
 impl fmt::Display for TransactionType {

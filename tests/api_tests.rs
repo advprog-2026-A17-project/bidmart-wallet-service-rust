@@ -3,31 +3,14 @@ use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
-use bidmart_wallet_service_rust::server::build_router;
-
-use sqlx::SqlitePool;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-use std::str::FromStr;
+use bidmart_wallet_service_rust::server;
 
 async fn setup_app() -> axum::Router {
-    let options = SqliteConnectOptions::from_str("sqlite::memory:")
-        .unwrap()
-        .create_if_missing(true);
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(options)
+    let pool = server::connect_pool("sqlite::memory:")
         .await
         .unwrap();
-
-    let sql = include_str!("../migrations/20260429000000_init.sql");
-    for statement in sql.split(';') {
-        let trimmed = statement.trim();
-        if !trimmed.is_empty() {
-            sqlx::query(trimmed).execute(&pool).await.unwrap();
-        }
-    }
-
-    build_router(pool)
+    server::run_migrations(&pool).await.unwrap();
+    server::build_router(pool)
 }
 
 async fn body_to_json(body: Body) -> serde_json::Value {

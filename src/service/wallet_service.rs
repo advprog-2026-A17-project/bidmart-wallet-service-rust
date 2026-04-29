@@ -3,6 +3,8 @@ use sqlx::SqlitePool;
 use crate::persistence::repositories::{TransactionRepository, WalletRepository};
 use crate::wallet::{Money, Wallet, WalletError, WalletTransaction};
 
+// ── ServiceError ────────────────────────────────────────────────
+
 /// Service-level error combining domain and persistence failures.
 #[derive(Debug)]
 pub enum ServiceError {
@@ -37,7 +39,13 @@ impl std::fmt::Display for ServiceError {
     }
 }
 
+// ── WalletService ───────────────────────────────────────────────
+
 /// Orchestrates wallet use cases by coordinating domain logic and persistence.
+///
+/// Follows the Service Layer pattern — controllers call into this layer,
+/// which fetches domain entities, invokes domain operations, and persists
+/// the resulting state and transaction records.
 pub struct WalletService {
     wallet_repo: WalletRepository,
     tx_repo: TransactionRepository,
@@ -51,11 +59,7 @@ impl WalletService {
         }
     }
 
-    pub async fn create_wallet(&self, user_id: &str) -> Result<Wallet, ServiceError> {
-        let wallet = Wallet::new(user_id);
-        self.wallet_repo.insert(&wallet).await?;
-        Ok(wallet)
-    }
+    // ── Queries ──────────────────────────────────────────────────
 
     pub async fn find_by_user_id(&self, user_id: &str) -> Result<Wallet, ServiceError> {
         self.wallet_repo
@@ -68,56 +72,46 @@ impl WalletService {
         Ok(self.wallet_repo.find_all().await?)
     }
 
-    pub async fn top_up(&self, user_id: &str, amount: Money) -> Result<Wallet, ServiceError> {
-        let mut wallet = self.find_by_user_id(user_id).await?;
-        let tx = wallet.top_up(amount)?;
-        self.tx_repo.insert(&tx).await?;
-        self.wallet_repo.update(&wallet).await?;
+    pub async fn get_transaction_history(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<WalletTransaction>, ServiceError> {
+        Ok(self.tx_repo.find_by_user_id(user_id).await?)
+    }
+
+    // ── Commands ─────────────────────────────────────────────────
+
+    pub async fn create_wallet(&self, user_id: &str) -> Result<Wallet, ServiceError> {
+        let wallet = Wallet::new(user_id);
+        self.wallet_repo.insert(&wallet).await?;
         Ok(wallet)
+    }
+
+    pub async fn top_up(&self, user_id: &str, amount: Money) -> Result<Wallet, ServiceError> {
+        self.mutate_wallet(user_id, |w| w.top_up(amount)).await
     }
 
     pub async fn withdraw(&self, user_id: &str, amount: Money) -> Result<Wallet, ServiceError> {
-        let mut wallet = self.find_by_user_id(user_id).await?;
-        let tx = wallet.withdraw(amount)?;
-        self.tx_repo.insert(&tx).await?;
-        self.wallet_repo.update(&wallet).await?;
-        Ok(wallet)
+        self.mutate_wallet(user_id, |w| w.withdraw(amount)).await
     }
 
     pub async fn hold(&self, user_id: &str, amount: Money) -> Result<Wallet, ServiceError> {
-        let mut wallet = self.find_by_user_id(user_id).await?;
-        let tx = wallet.hold(amount)?;
-        self.tx_repo.insert(&tx).await?;
-        self.wallet_repo.update(&wallet).await?;
-        Ok(wallet)
+        self.mutate_wallet(user_id, |w| w.hold(amount)).await
     }
 
     pub async fn release(&self, user_id: &str, amount: Money) -> Result<Wallet, ServiceError> {
-        let mut wallet = self.find_by_user_id(user_id).await?;
-        let tx = wallet.release(amount)?;
-        self.tx_repo.insert(&tx).await?;
-        self.wallet_repo.update(&wallet).await?;
-        Ok(wallet)
+        self.mutate_wallet(user_id, |w| w.release(amount)).await
     }
 
     pub async fn convert(&self, user_id: &str, amount: Money) -> Result<Wallet, ServiceError> {
-        let mut wallet = self.find_by_user_id(user_id).await?;
-        let tx = wallet.convert(amount)?;
-        self.tx_repo.insert(&tx).await?;
-        self.wallet_repo.update(&wallet).await?;
-        Ok(wallet)
+        self.mutate_wallet(user_id, |w| w.convert(amount)).await
     }
 
     pub async fn bid(&self, user_id: &str, amount: Money) -> Result<Wallet, ServiceError> {
-        let mut wallet = self.find_by_user_id(user_id).await?;
-        let tx = wallet.bid(amount)?;
-        self.tx_repo.insert(&tx).await?;
-        self.wallet_repo.update(&wallet).await?;
-        Ok(wallet)
+        self.mutate_wallet(user_id, |w| w.bid(amount)).await
     }
 
     pub async fn cancel_bid(&self, user_id: &str, bid_tx_id: &str) -> Result<(), ServiceError> {
-        let mut wallet = self.find_by_user_id(user_id).await?;
         let tx = self
             .tx_repo
             .find_by_id(bid_tx_id)
@@ -128,16 +122,25 @@ impl WalletService {
             return Err(ServiceError::ForbiddenAccess);
         }
 
-        let release_tx = wallet.release(tx.amount)?;
-        self.tx_repo.insert(&release_tx).await?;
-        self.wallet_repo.update(&wallet).await?;
+        self.mutate_wallet(user_id, |w| w.release(tx.amount)).await?;
         Ok(())
     }
 
-    pub async fn get_transaction_history(
+    // ── Private: DRY mutation helper ─────────────────────────────
+
+    /// Fetch → apply domain operation → persist transaction + wallet.
+    ///
+    /// Eliminates the repetitive find-mutate-save-update pattern from
+    /// every balance operation.
+    async fn mutate_wallet(
         &self,
         user_id: &str,
-    ) -> Result<Vec<WalletTransaction>, ServiceError> {
-        Ok(self.tx_repo.find_by_user_id(user_id).await?)
+        operation: impl FnOnce(&mut Wallet) -> Result<WalletTransaction, WalletError>,
+    ) -> Result<Wallet, ServiceError> {
+        let mut wallet = self.find_by_user_id(user_id).await?;
+        let tx = operation(&mut wallet)?;
+        self.tx_repo.insert(&tx).await?;
+        self.wallet_repo.update(&wallet).await?;
+        Ok(wallet)
     }
 }

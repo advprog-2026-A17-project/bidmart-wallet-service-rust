@@ -1,12 +1,13 @@
 use sqlx::SqlitePool;
 
-use crate::persistence::models::{TransactionRow, WalletRow};
+use crate::persistence::models::{ProvisioningEventRow, TransactionRow, WalletRow};
 use crate::wallet::{Money, TransactionType, Wallet, WalletTransaction};
 
 // ── Column lists (DRY) ──────────────────────────────────────────
 
 const WALLET_COLS: &str = "id, user_id, active_balance_cents, held_balance_cents";
 const TX_COLS: &str = "id, user_id, transaction_type, amount_cents, created_at";
+const PROV_COLS: &str = "event_id, user_id, email, occurred_at, source, processed_at";
 
 // ── Row → Domain mappers ────────────────────────────────────────
 
@@ -138,3 +139,60 @@ impl TransactionRepository {
         Ok(row.map(transaction_from_row))
     }
 }
+
+// ── ProvisioningEventRepository ─────────────────────────────────
+
+pub struct ProvisioningEventRepository {
+    pool: SqlitePool,
+}
+
+impl ProvisioningEventRepository {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    pub async fn exists(&self, event_id: &str) -> Result<bool, sqlx::Error> {
+        let row: Option<(i64,)> = sqlx::query_as(
+            "SELECT 1 FROM wallet_provisioning_events WHERE event_id = ?",
+        )
+        .bind(event_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.is_some())
+    }
+
+    pub async fn insert(
+        &self,
+        event_id: &str,
+        user_id: &str,
+        email: &str,
+        occurred_at: &str,
+        source: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO wallet_provisioning_events (event_id, user_id, email, occurred_at, source) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(event_id)
+        .bind(user_id)
+        .bind(email)
+        .bind(occurred_at)
+        .bind(source)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn find_recent(&self, limit: i64) -> Result<Vec<ProvisioningEventRow>, sqlx::Error> {
+        let sql = format!(
+            "SELECT {PROV_COLS} FROM wallet_provisioning_events ORDER BY processed_at DESC LIMIT ?"
+        );
+        let rows: Vec<ProvisioningEventRow> = sqlx::query_as(&sql)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?;
+
+        Ok(rows)
+    }
+}
+

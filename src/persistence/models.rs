@@ -18,3 +18,14 @@ pub struct TransactionRow {
     pub amount_cents: i64,
     pub created_at: String,
 }
+
+/// Database row for the wallet_provisioning_events table.
+#[derive(Debug, FromRow)]
+pub struct ProvisioningEventRow {
+    pub event_id: String,
+    pub user_id: String,
+    pub email: String,
+    pub occurred_at: String,
+    pub source: String,
+    pub processed_at: String,
+}

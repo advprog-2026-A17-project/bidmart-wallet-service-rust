@@ -126,18 +126,27 @@ async fn hold_funds_returns_updated_balances() {
         .unwrap();
     let _ = app.clone().oneshot(topup).await.unwrap();
 
+    // 1. Payload Hold Baru
     let req = Request::builder()
         .method("POST")
         .uri("/api/v1/wallet/hold")
         .header("content-type", "application/json")
-        .body(Body::from(r#"{"userId":"user-1","amount":4000}"#))
+        .body(Body::from(r#"{"userId":"user-1","holdId":"hold-1","auctionId":"auc-1","bidId":"bid-1","amount":4000,"expiresAt":"2026-12-31T23:59:59Z"}"#))
         .unwrap();
-    let resp = app.oneshot(req).await.unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
+    // 2. Cek HoldResponse
     let json = body_to_json(resp.into_body()).await;
-    assert_eq!(json["activeBalance"], 6000);
-    assert_eq!(json["heldBalance"], 4000);
+    assert_eq!(json["status"], "ACTIVE");
+    assert_eq!(json["amount"], 4000);
+
+    // 3. Verifikasi Saldo Wallet
+    let get_req = Request::builder().uri("/api/v1/wallet/user-1").body(Body::empty()).unwrap();
+    let get_resp = app.oneshot(get_req).await.unwrap();
+    let get_json = body_to_json(get_resp.into_body()).await;
+    assert_eq!(get_json["activeBalance"], 6000);
+    assert_eq!(get_json["heldBalance"], 4000);
 }
 
 // ── POST /api/v1/wallet/release ──────────────────────────────────
@@ -161,26 +170,35 @@ async fn release_funds_returns_updated_balances() {
         .unwrap();
     let _ = app.clone().oneshot(topup).await.unwrap();
 
+    // Setup: Buat hold dulu dengan payload lengkap
     let hold = Request::builder()
         .method("POST")
         .uri("/api/v1/wallet/hold")
         .header("content-type", "application/json")
-        .body(Body::from(r#"{"userId":"user-1","amount":5000}"#))
+        .body(Body::from(r#"{"userId":"user-1","holdId":"hold-2","auctionId":"auc-2","bidId":"bid-2","amount":5000,"expiresAt":"2026-12-31T23:59:59Z"}"#))
         .unwrap();
     let _ = app.clone().oneshot(hold).await.unwrap();
 
+    // 1. Request Release (Hanya butuh holdId)
     let req = Request::builder()
         .method("POST")
         .uri("/api/v1/wallet/release")
         .header("content-type", "application/json")
-        .body(Body::from(r#"{"userId":"user-1","amount":3000}"#))
+        .body(Body::from(r#"{"holdId":"hold-2"}"#))
         .unwrap();
-    let resp = app.oneshot(req).await.unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
+    // 2. Cek HoldResponse Status
     let json = body_to_json(resp.into_body()).await;
-    assert_eq!(json["activeBalance"], 8000);
-    assert_eq!(json["heldBalance"], 2000);
+    assert_eq!(json["status"], "RELEASED");
+
+    // 3. Verifikasi Saldo Kembali Penuh
+    let get_req = Request::builder().uri("/api/v1/wallet/user-1").body(Body::empty()).unwrap();
+    let get_resp = app.oneshot(get_req).await.unwrap();
+    let get_json = body_to_json(get_resp.into_body()).await;
+    assert_eq!(get_json["activeBalance"], 10000);
+    assert_eq!(get_json["heldBalance"], 0);
 }
 
 // ── POST /api/v1/wallet/convert ──────────────────────────────────
@@ -204,26 +222,35 @@ async fn convert_funds_returns_updated_balances() {
         .unwrap();
     let _ = app.clone().oneshot(topup).await.unwrap();
 
+    // Setup Hold
     let hold = Request::builder()
         .method("POST")
         .uri("/api/v1/wallet/hold")
         .header("content-type", "application/json")
-        .body(Body::from(r#"{"userId":"user-1","amount":5000}"#))
+        .body(Body::from(r#"{"userId":"user-1","holdId":"hold-3","auctionId":"auc-3","bidId":"bid-3","amount":5000,"expiresAt":"2026-12-31T23:59:59Z"}"#))
         .unwrap();
     let _ = app.clone().oneshot(hold).await.unwrap();
 
+    // 1. Request Convert
     let req = Request::builder()
         .method("POST")
         .uri("/api/v1/wallet/convert")
         .header("content-type", "application/json")
-        .body(Body::from(r#"{"userId":"user-1","amount":5000}"#))
+        .body(Body::from(r#"{"holdId":"hold-3"}"#))
         .unwrap();
-    let resp = app.oneshot(req).await.unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
+    // 2. Cek HoldResponse Status
     let json = body_to_json(resp.into_body()).await;
-    assert_eq!(json["activeBalance"], 5000);
-    assert_eq!(json["heldBalance"], 0);
+    assert_eq!(json["status"], "CONVERTED");
+
+    // 3. Verifikasi Saldo Tertahan Hilang
+    let get_req = Request::builder().uri("/api/v1/wallet/user-1").body(Body::empty()).unwrap();
+    let get_resp = app.oneshot(get_req).await.unwrap();
+    let get_json = body_to_json(get_resp.into_body()).await;
+    assert_eq!(get_json["activeBalance"], 5000);
+    assert_eq!(get_json["heldBalance"], 0);
 }
 
 // ── POST /api/v1/wallet/{userId}/withdraw ────────────────────────
@@ -343,12 +370,15 @@ async fn hold_insufficient_balance_returns_400() {
         .unwrap();
     let _ = app.clone().oneshot(create).await.unwrap();
 
+    // Request ditolak karena saldonya masih 0, tapi payloadnya harus lengkap
     let req = Request::builder()
         .method("POST")
         .uri("/api/v1/wallet/hold")
         .header("content-type", "application/json")
-        .body(Body::from(r#"{"userId":"user-1","amount":9999}"#))
+        .body(Body::from(r#"{"userId":"user-1","holdId":"hold-4","auctionId":"auc-4","bidId":"bid-4","amount":9999,"expiresAt":"2026-12-31T23:59:59Z"}"#))
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
+    
+    // Status Code harus 400 Bad Request
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }

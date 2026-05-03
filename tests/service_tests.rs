@@ -1,7 +1,6 @@
 use bidmart_wallet_service_rust::service::wallet_service::WalletService;
 use bidmart_wallet_service_rust::wallet::Money;
 
-use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use std::str::FromStr;
 

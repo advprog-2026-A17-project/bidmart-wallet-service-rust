@@ -285,6 +285,17 @@ pub enum HoldStatus {
     Converted,
 }
 
+impl std::fmt::Display for HoldStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let status_str = match self {
+            HoldStatus::Active => "ACTIVE",
+            HoldStatus::Released => "RELEASED",
+            HoldStatus::Converted => "CONVERTED",
+        };
+        write!(f, "{}", status_str)
+    }
+}
+
 impl std::str::FromStr for HoldStatus {
     type Err = String;
 

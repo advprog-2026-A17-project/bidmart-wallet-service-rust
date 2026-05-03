@@ -3,7 +3,7 @@ use sqlx::SqlitePool;
 use crate::persistence::repositories::{
     ProvisioningEventRepository, TransactionRepository, WalletRepository,
 };
-use crate::wallet::{Money, Wallet, WalletError, WalletTransaction};
+use crate::wallet::{Money, Wallet, WalletError, WalletTransaction, Hold};
 
 // ── ServiceError ────────────────────────────────────────────────
 
@@ -15,6 +15,7 @@ pub enum ServiceError {
     Persistence(sqlx::Error),
     TransactionNotFound(String),
     ForbiddenAccess,
+    HoldFailed(String),
 }
 
 impl From<WalletError> for ServiceError {
@@ -37,6 +38,7 @@ impl std::fmt::Display for ServiceError {
             Self::Persistence(e) => write!(f, "persistence error: {e}"),
             Self::TransactionNotFound(id) => write!(f, "transaction not found: {id}"),
             Self::ForbiddenAccess => write!(f, "forbidden transaction access"),
+            Self::HoldFailed(msg) => write!(f, "hold operation failed: {msg}"),
         }
     }
 }
@@ -128,6 +130,39 @@ impl WalletService {
 
         self.mutate_wallet(user_id, |w| w.release(tx.amount)).await?;
         Ok(())
+    }
+
+    pub async fn hold_funds(
+        &self,
+        user_id: &str,
+        auction_id: &str,
+        bid_id: &str,
+        amount: Money,
+        hold_id: &str,
+        expires_at: &str,
+    ) -> Result<Hold, ServiceError> {
+        // Cari dompet berdasarkan user_id terlebih dahulu
+        let wallet = self.find_by_user_id(user_id).await?;
+
+        // Teruskan data ke repository yang sudah dilengkapi database transaction
+        self.wallet_repo
+            .hold_funds(wallet.id(), auction_id, bid_id, amount, hold_id, expires_at)
+            .await
+            .map_err(|e| ServiceError::HoldFailed(e))
+    }
+
+    pub async fn release_funds(&self, hold_id: &str) -> Result<Hold, ServiceError> {
+        self.wallet_repo
+            .release_funds(hold_id)
+            .await
+            .map_err(|e| ServiceError::HoldFailed(e))
+    }
+
+    pub async fn convert_funds(&self, hold_id: &str) -> Result<Hold, ServiceError> {
+        self.wallet_repo
+            .convert_funds(hold_id)
+            .await
+            .map_err(|e| ServiceError::HoldFailed(e))
     }
 
     // ── Provisioning ─────────────────────────────────────────────

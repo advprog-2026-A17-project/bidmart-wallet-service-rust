@@ -1,9 +1,13 @@
 use std::env;
 
 use bidmart_wallet_service_rust::server;
+use dotenvy::from_path;
 
 #[tokio::main]
 async fn main() {
+    let _ = from_path(".env");
+    let _ = dotenvy::from_path_override("../bidmart-infrastructure/.env");
+
     let database_url = env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:wallet.db".to_string());
     let port = env::var("PORT").unwrap_or_else(|_| "8083".to_string());
     let addr = format!("0.0.0.0:{port}");

@@ -24,3 +24,18 @@ CREATE TABLE IF NOT EXISTS wallet_provisioning_events (
     source       TEXT NOT NULL,
     processed_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS holds (
+    id TEXT PRIMARY KEY,
+    wallet_id TEXT NOT NULL,
+    auction_id TEXT NOT NULL,
+    bid_id TEXT NOT NULL,
+    amount INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX idx_holds_auction_bid ON holds(auction_id, bid_id);
+CREATE INDEX idx_holds_wallet ON holds(wallet_id);

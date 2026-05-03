@@ -142,6 +142,7 @@ dependencies = [
  "anyhow",
  "axum",
  "chrono",
+ "dotenvy",
  "http-body-util",
  "hyper",
  "serde",

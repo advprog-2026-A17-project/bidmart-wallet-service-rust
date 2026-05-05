@@ -105,6 +105,87 @@ async fn top_up_returns_updated_balance() {
     assert_eq!(json["activeBalance"], 5000);
 }
 
+// ── Midtrans sandbox top-up simulation ───────────────────────────
+
+#[tokio::test]
+async fn midtrans_top_up_intent_returns_pending_payment_without_crediting_wallet() {
+    let app = setup_app().await;
+
+    let create = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/add")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"userId":"user-1"}"#))
+        .unwrap();
+    let _ = app.clone().oneshot(create).await.unwrap();
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/user-1/top-up/intent")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"amountCents":5000}"#))
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let json = body_to_json(resp.into_body()).await;
+    let payment_id = json["paymentId"].as_str().unwrap();
+    assert!(!payment_id.is_empty());
+    assert_eq!(json["amountCents"], 5000);
+    assert_eq!(json["status"], "PENDING");
+    assert!(json["redirectUrl"].as_str().unwrap().contains(payment_id));
+
+    let get_req = Request::builder()
+        .uri("/api/v1/wallet/user-1")
+        .body(Body::empty())
+        .unwrap();
+    let get_resp = app.oneshot(get_req).await.unwrap();
+    let wallet = body_to_json(get_resp.into_body()).await;
+    assert_eq!(wallet["activeBalance"], 0);
+}
+
+#[tokio::test]
+async fn midtrans_paid_callback_credits_wallet_once() {
+    let app = setup_app().await;
+
+    let create = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/add")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"userId":"user-1"}"#))
+        .unwrap();
+    let _ = app.clone().oneshot(create).await.unwrap();
+
+    let intent = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/user-1/top-up/intent")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"amountCents":7500}"#))
+        .unwrap();
+    let intent_resp = app.clone().oneshot(intent).await.unwrap();
+    let intent_json = body_to_json(intent_resp.into_body()).await;
+    let payment_id = intent_json["paymentId"].as_str().unwrap();
+
+    for _ in 0..2 {
+        let callback = Request::builder()
+            .method("POST")
+            .uri(format!("/api/v1/wallet/midtrans/payments/{payment_id}/simulate"))
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"status":"PAID"}"#))
+            .unwrap();
+        let resp = app.clone().oneshot(callback).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    let get_req = Request::builder()
+        .uri("/api/v1/wallet/user-1")
+        .body(Body::empty())
+        .unwrap();
+    let get_resp = app.oneshot(get_req).await.unwrap();
+    let wallet = body_to_json(get_resp.into_body()).await;
+    assert_eq!(wallet["activeBalance"], 7500);
+}
+
 // ── POST /api/v1/wallet/hold ─────────────────────────────────────
 
 #[tokio::test]
@@ -284,6 +365,67 @@ async fn withdraw_returns_updated_balance() {
 
     let json = body_to_json(resp.into_body()).await;
     assert_eq!(json["activeBalance"], 7000);
+}
+
+// ── Midtrans sandbox withdrawal simulation ───────────────────────
+
+#[tokio::test]
+async fn midtrans_failed_withdrawal_reverses_reserved_balance() {
+    let app = setup_app().await;
+
+    let create = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/add")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"userId":"user-1"}"#))
+        .unwrap();
+    let _ = app.clone().oneshot(create).await.unwrap();
+
+    let topup = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/user-1/top-up?amount=10000")
+        .body(Body::empty())
+        .unwrap();
+    let _ = app.clone().oneshot(topup).await.unwrap();
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/user-1/withdrawals")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"amountCents":3000,"bankAccount":"1234567890"}"#))
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let json = body_to_json(resp.into_body()).await;
+    let withdrawal_id = json["withdrawalId"].as_str().unwrap();
+    assert_eq!(json["amountCents"], 3000);
+    assert_eq!(json["status"], "PENDING");
+
+    let after_reserve = Request::builder()
+        .uri("/api/v1/wallet/user-1")
+        .body(Body::empty())
+        .unwrap();
+    let after_reserve_resp = app.clone().oneshot(after_reserve).await.unwrap();
+    let after_reserve_json = body_to_json(after_reserve_resp.into_body()).await;
+    assert_eq!(after_reserve_json["activeBalance"], 7000);
+
+    let simulate = Request::builder()
+        .method("POST")
+        .uri(format!("/api/v1/wallet/midtrans/withdrawals/{withdrawal_id}/simulate"))
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"status":"FAILED"}"#))
+        .unwrap();
+    let simulate_resp = app.clone().oneshot(simulate).await.unwrap();
+    assert_eq!(simulate_resp.status(), StatusCode::OK);
+
+    let get_req = Request::builder()
+        .uri("/api/v1/wallet/user-1")
+        .body(Body::empty())
+        .unwrap();
+    let get_resp = app.oneshot(get_req).await.unwrap();
+    let wallet = body_to_json(get_resp.into_body()).await;
+    assert_eq!(wallet["activeBalance"], 10000);
 }
 
 // ── POST /api/v1/wallet/{userId}/trybid ──────────────────────────

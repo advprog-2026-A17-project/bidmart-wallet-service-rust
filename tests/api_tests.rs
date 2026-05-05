@@ -189,6 +189,23 @@ async fn midtrans_paid_callback_credits_wallet_once() {
 // ── POST /api/v1/wallet/hold ─────────────────────────────────────
 
 #[tokio::test]
+async fn hold_funds_without_internal_token_is_forbidden() {
+    let app = setup_app().await;
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/hold")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"userId":"user-1","holdId":"hold-denied","auctionId":"auc-denied","bidId":"bid-denied","amount":4000,"expiresAt":"2026-12-31T23:59:59Z"}"#))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    let json = body_to_json(resp.into_body()).await;
+    assert_eq!(json["error_code"], "INVALID_INTERNAL_TOKEN");
+}
+
+#[tokio::test]
 async fn hold_funds_returns_updated_balances() {
     let app = setup_app().await;
 

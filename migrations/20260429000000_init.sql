@@ -1,8 +1,9 @@
 CREATE TABLE IF NOT EXISTS wallets (
-    id          TEXT PRIMARY KEY,
-    user_id     TEXT NOT NULL UNIQUE,
+    id                   TEXT PRIMARY KEY,
+    user_id              TEXT NOT NULL UNIQUE,
     active_balance_cents INTEGER NOT NULL DEFAULT 0,
-    held_balance_cents   INTEGER NOT NULL DEFAULT 0
+    held_balance_cents   INTEGER NOT NULL DEFAULT 0,
+    version              INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS wallet_transactions (
@@ -10,7 +11,9 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
     user_id          TEXT NOT NULL,
     transaction_type TEXT NOT NULL,
     amount_cents     INTEGER NOT NULL,
-    created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    correlation_id   TEXT,
+    source_service   TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_wallet_transactions_user_id
@@ -26,20 +29,16 @@ CREATE TABLE IF NOT EXISTS wallet_provisioning_events (
 );
 
 CREATE TABLE IF NOT EXISTS holds (
-    id TEXT PRIMARY KEY,
-    wallet_id TEXT NOT NULL,
+    id         TEXT PRIMARY KEY,
+    wallet_id  TEXT NOT NULL,
     auction_id TEXT NOT NULL,
-    bid_id TEXT NOT NULL,
-    amount INTEGER NOT NULL,
-    status TEXT NOT NULL,
+    bid_id     TEXT NOT NULL,
+    amount     INTEGER NOT NULL,
+    status     TEXT NOT NULL,
     expires_at TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX idx_holds_auction_bid ON holds(auction_id, bid_id);
-CREATE INDEX idx_holds_wallet ON holds(wallet_id);
-
-ALTER TABLE wallet_transactions ADD COLUMN correlation_id TEXT;
-ALTER TABLE wallet_transactions ADD COLUMN source_service TEXT;
-ALTER TABLE wallets ADD COLUMN version INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS idx_holds_auction_bid ON holds(auction_id, bid_id);
+CREATE INDEX IF NOT EXISTS idx_holds_wallet ON holds(wallet_id);

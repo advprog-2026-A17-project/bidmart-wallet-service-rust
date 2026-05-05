@@ -330,3 +330,25 @@ pub struct Hold {
     pub created_at: String,
     pub updated_at: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaymentIntent {
+    pub id: String,
+    pub user_id: String,
+    pub amount_cents: i64,
+    pub status: String,
+    pub redirect_url: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WalletWithdrawal {
+    pub id: String,
+    pub user_id: String,
+    pub amount_cents: i64,
+    pub bank_account: String,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+}

@@ -128,6 +128,8 @@ pub struct WalletTransaction {
     pub user_id: String,
     pub transaction_type: TransactionType,
     pub amount: Money,
+    pub correlation_id: Option<String>,
+    pub source_service: Option<String>,
 }
 
 impl WalletTransaction {
@@ -137,6 +139,8 @@ impl WalletTransaction {
             user_id: user_id.to_string(),
             transaction_type,
             amount,
+            correlation_id: None,
+            source_service: None,
         }
     }
 }
@@ -272,4 +276,49 @@ impl Wallet {
     fn record(&self, tx_type: TransactionType, amount: Money) -> WalletTransaction {
         WalletTransaction::new(&self.user_id, tx_type, amount)
     }
+}
+
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum HoldStatus {
+    Active,
+    Released,
+    Converted,
+}
+
+impl std::fmt::Display for HoldStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let status_str = match self {
+            HoldStatus::Active => "ACTIVE",
+            HoldStatus::Released => "RELEASED",
+            HoldStatus::Converted => "CONVERTED",
+        };
+        write!(f, "{}", status_str)
+    }
+}
+
+impl std::str::FromStr for HoldStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "ACTIVE" => Ok(HoldStatus::Active),
+            "RELEASED" => Ok(HoldStatus::Released),
+            "CONVERTED" => Ok(HoldStatus::Converted),
+            _ => Err(format!("Unknown hold status: {}", s)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Hold {
+    pub id: String,
+    pub wallet_id: String,
+    pub auction_id: String,
+    pub bid_id: String,
+    pub amount: i64,
+    pub status: HoldStatus,
+    pub expires_at: String,
+    pub created_at: String,
+    pub updated_at: String,
 }

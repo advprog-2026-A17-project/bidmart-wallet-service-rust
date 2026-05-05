@@ -7,6 +7,7 @@ pub struct WalletRow {
     pub user_id: String,
     pub active_balance_cents: i64,
     pub held_balance_cents: i64,
+    pub version: i64,
 }
 
 /// Database row for the wallet_transactions table.

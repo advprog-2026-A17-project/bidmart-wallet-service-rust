@@ -158,6 +158,7 @@ pub struct Wallet {
     user_id: String,
     active_balance: Money,
     held_balance: Money,
+    version: i64,
 }
 
 impl Wallet {
@@ -168,6 +169,7 @@ impl Wallet {
             user_id: user_id.to_string(),
             active_balance: Money::zero(),
             held_balance: Money::zero(),
+            version: 0,
         }
     }
 
@@ -177,13 +179,19 @@ impl Wallet {
         user_id: String,
         active_balance: Money,
         held_balance: Money,
+        version: i64,
     ) -> Self {
         Self {
             id,
             user_id,
             active_balance,
             held_balance,
+            version,
         }
+    }
+
+    pub fn version(&self) -> i64 {
+        self.version
     }
 
     // ── Accessors ────────────────────────────────────────────────

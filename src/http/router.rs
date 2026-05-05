@@ -23,8 +23,15 @@ pub fn create_router(service: WalletService) -> Router {
         .route("/:userId", get(get_wallet))
         .route("/:userId/detail", get(get_wallet_detail))
         .route("/:userId/top-up", post(top_up))
+        .route("/:userId/top-up/intent", post(create_top_up_intent))
         .route("/:userId/withdraw", post(withdraw))
+        .route("/:userId/withdrawals", post(create_withdrawal))
         .route("/:userId/trybid", post(try_bid))
+        .route("/midtrans/payments/:paymentId/simulate", post(simulate_payment))
+        .route(
+            "/midtrans/withdrawals/:withdrawalId/simulate",
+            post(simulate_withdrawal),
+        )
         .with_state(state);
 
     Router::new().nest("/api/v1/wallet", wallet_routes)
@@ -79,6 +86,31 @@ async fn top_up(
 ) -> impl IntoResponse {
     match svc.top_up(&user_id, Money::from_cents(q.amount)).await {
         Ok(w) => Ok(Json(WalletResponse::from(&w))),
+        Err(e) => Err(map_error(e)),
+    }
+}
+
+async fn create_top_up_intent(
+    State(svc): State<AppState>,
+    Path(user_id): Path<String>,
+    Json(req): Json<PaymentIntentRequest>,
+) -> impl IntoResponse {
+    match svc
+        .create_top_up_intent(&user_id, Money::from_cents(req.amount_cents))
+        .await
+    {
+        Ok(payment) => Ok((StatusCode::CREATED, Json(PaymentIntentResponse::from(&payment)))),
+        Err(e) => Err(map_error(e)),
+    }
+}
+
+async fn simulate_payment(
+    State(svc): State<AppState>,
+    Path(payment_id): Path<String>,
+    Json(req): Json<MidtransSimulationRequest>,
+) -> impl IntoResponse {
+    match svc.simulate_payment_status(&payment_id, &req.status).await {
+        Ok(payment) => Ok(Json(PaymentIntentResponse::from(&payment))),
         Err(e) => Err(map_error(e)),
     }
 }
@@ -143,6 +175,38 @@ async fn withdraw(
     }
 }
 
+async fn create_withdrawal(
+    State(svc): State<AppState>,
+    Path(user_id): Path<String>,
+    Json(req): Json<WithdrawalRequest>,
+) -> impl IntoResponse {
+    match svc
+        .create_withdrawal(
+            &user_id,
+            Money::from_cents(req.amount_cents),
+            &req.bank_account,
+        )
+        .await
+    {
+        Ok(withdrawal) => Ok((StatusCode::CREATED, Json(WithdrawalResponse::from(&withdrawal)))),
+        Err(e) => Err(map_error(e)),
+    }
+}
+
+async fn simulate_withdrawal(
+    State(svc): State<AppState>,
+    Path(withdrawal_id): Path<String>,
+    Json(req): Json<MidtransSimulationRequest>,
+) -> impl IntoResponse {
+    match svc
+        .simulate_withdrawal_status(&withdrawal_id, &req.status)
+        .await
+    {
+        Ok(withdrawal) => Ok(Json(WithdrawalResponse::from(&withdrawal))),
+        Err(e) => Err(map_error(e)),
+    }
+}
+
 // ── Error mapping ───────────────────────────────────────────────
 
 fn map_error(e: ServiceError) -> (StatusCode, Json<StructuredErrorResponse>) {
@@ -183,6 +247,11 @@ fn map_error(e: ServiceError) -> (StatusCode, Json<StructuredErrorResponse>) {
             };
             (StatusCode::BAD_REQUEST, code, msg.clone())
         },
+        ServiceError::InvalidPaymentStatus(_) => (
+            StatusCode::BAD_REQUEST,
+            "INVALID_PAYMENT_STATUS",
+            e.to_string(),
+        ),
     };
 
     (status, Json(StructuredErrorResponse { 

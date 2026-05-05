@@ -1,7 +1,12 @@
 use sqlx::SqlitePool;
 
-use crate::persistence::models::{ProvisioningEventRow, TransactionRow, WalletRow, HoldRow};
-use crate::wallet::{Money, TransactionType, Wallet, WalletTransaction, Hold, HoldStatus};
+use crate::persistence::models::{
+    HoldRow, PaymentIntentRow, ProvisioningEventRow, TransactionRow, WalletRow, WithdrawalRow,
+};
+use crate::wallet::{
+    Hold, HoldStatus, Money, PaymentIntent, TransactionType, Wallet, WalletTransaction,
+    WalletWithdrawal,
+};
 
 // ── Column lists (DRY) ──────────────────────────────────────────
 
@@ -9,6 +14,8 @@ const WALLET_COLS: &str = "id, user_id, active_balance_cents, held_balance_cents
 const TX_COLS: &str = "id, user_id, transaction_type, amount_cents, created_at, correlation_id, source_service";
 const PROV_COLS: &str = "event_id, user_id, email, occurred_at, source, processed_at";
 const HOLD_COLS: &str = "id, wallet_id, auction_id, bid_id, amount, status, expires_at, created_at, updated_at";
+const PAYMENT_COLS: &str = "id, user_id, amount_cents, status, redirect_url, created_at, updated_at";
+const WITHDRAWAL_COLS: &str = "id, user_id, amount_cents, bank_account, status, created_at, updated_at";
 
 // ── Row → Domain mappers ────────────────────────────────────────
 
@@ -306,6 +313,98 @@ impl WalletRepository {
         
         Ok(rows.into_iter().map(|r| r.0).collect())
     }
+
+    pub async fn insert_payment_intent(
+        &self,
+        user_id: &str,
+        amount: Money,
+    ) -> Result<PaymentIntent, sqlx::Error> {
+        let payment_id = uuid::Uuid::new_v4().to_string();
+        let redirect_url = format!("https://app.sandbox.midtrans.com/snap/v2/vtweb/{payment_id}");
+        sqlx::query(
+            "INSERT INTO wallet_payment_intents (id, user_id, amount_cents, status, redirect_url) VALUES (?, ?, ?, 'PENDING', ?)",
+        )
+        .bind(&payment_id)
+        .bind(user_id)
+        .bind(amount.cents() as i64)
+        .bind(&redirect_url)
+        .execute(&self.pool)
+        .await?;
+
+        self.find_payment_intent(&payment_id).await?.ok_or(sqlx::Error::RowNotFound)
+    }
+
+    pub async fn find_payment_intent(
+        &self,
+        payment_id: &str,
+    ) -> Result<Option<PaymentIntent>, sqlx::Error> {
+        let sql = format!("SELECT {PAYMENT_COLS} FROM wallet_payment_intents WHERE id = ?");
+        let row: Option<PaymentIntentRow> = sqlx::query_as(&sql)
+            .bind(payment_id)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        Ok(row.map(PaymentIntent::from))
+    }
+
+    pub async fn update_payment_status(
+        &self,
+        payment_id: &str,
+        status: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE wallet_payment_intents SET status = ?, updated_at = datetime('now') WHERE id = ?")
+            .bind(status)
+            .bind(payment_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn insert_withdrawal(
+        &self,
+        user_id: &str,
+        amount: Money,
+        bank_account: &str,
+    ) -> Result<WalletWithdrawal, sqlx::Error> {
+        let withdrawal_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO wallet_withdrawals (id, user_id, amount_cents, bank_account, status) VALUES (?, ?, ?, ?, 'PENDING')",
+        )
+        .bind(&withdrawal_id)
+        .bind(user_id)
+        .bind(amount.cents() as i64)
+        .bind(bank_account)
+        .execute(&self.pool)
+        .await?;
+
+        self.find_withdrawal(&withdrawal_id).await?.ok_or(sqlx::Error::RowNotFound)
+    }
+
+    pub async fn find_withdrawal(
+        &self,
+        withdrawal_id: &str,
+    ) -> Result<Option<WalletWithdrawal>, sqlx::Error> {
+        let sql = format!("SELECT {WITHDRAWAL_COLS} FROM wallet_withdrawals WHERE id = ?");
+        let row: Option<WithdrawalRow> = sqlx::query_as(&sql)
+            .bind(withdrawal_id)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        Ok(row.map(WalletWithdrawal::from))
+    }
+
+    pub async fn update_withdrawal_status(
+        &self,
+        withdrawal_id: &str,
+        status: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE wallet_withdrawals SET status = ?, updated_at = datetime('now') WHERE id = ?")
+            .bind(status)
+            .bind(withdrawal_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
 }
 
 // ── TransactionRepository ───────────────────────────────────────
@@ -417,4 +516,3 @@ impl ProvisioningEventRepository {
         Ok(rows)
     }
 }
-

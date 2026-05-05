@@ -6,7 +6,7 @@ use crate::wallet::{Money, TransactionType, Wallet, WalletTransaction, Hold, Hol
 // ── Column lists (DRY) ──────────────────────────────────────────
 
 const WALLET_COLS: &str = "id, user_id, active_balance_cents, held_balance_cents";
-const TX_COLS: &str = "id, user_id, transaction_type, amount_cents, created_at";
+const TX_COLS: &str = "id, user_id, transaction_type, amount_cents, created_at, correlation_id, source_service";
 const PROV_COLS: &str = "event_id, user_id, email, occurred_at, source, processed_at";
 const HOLD_COLS: &str = "id, wallet_id, auction_id, bid_id, amount, status, expires_at, created_at, updated_at";
 
@@ -27,6 +27,8 @@ fn transaction_from_row(row: TransactionRow) -> WalletTransaction {
         user_id: row.user_id,
         transaction_type: TransactionType::from_str(&row.transaction_type),
         amount: Money::from_cents(row.amount_cents as u64),
+        correlation_id: row.correlation_id,
+        source_service: row.source_service,
     }
 }
 
@@ -126,11 +128,13 @@ impl WalletRepository {
             .execute(&mut *tx)
             .await.map_err(|e| e.to_string())?;
 
-        sqlx::query("INSERT INTO wallet_transactions (id, user_id, transaction_type, amount_cents) VALUES (?, ?, ?, ?)")
+        sqlx::query("INSERT INTO wallet_transactions (id, user_id, transaction_type, amount_cents, correlation_id, source_service) VALUES (?, ?, ?, ?, ?, ?)")
             .bind(&wallet_tx.id)
             .bind(&wallet_tx.user_id)
             .bind(wallet_tx.transaction_type.as_str())
             .bind(wallet_tx.amount.cents() as i64)
+            .bind(&wallet_tx.correlation_id) 
+            .bind(&wallet_tx.source_service)
             .execute(&mut *tx)
             .await.map_err(|e| e.to_string())?;
 
@@ -191,11 +195,13 @@ impl WalletRepository {
             .execute(&mut *tx)
             .await.map_err(|e| e.to_string())?;
 
-        sqlx::query("INSERT INTO wallet_transactions (id, user_id, transaction_type, amount_cents) VALUES (?, ?, ?, ?)")
+        sqlx::query("INSERT INTO wallet_transactions (id, user_id, transaction_type, amount_cents, correlation_id, source_service) VALUES (?, ?, ?, ?, ?, ?)")
             .bind(&wallet_tx.id)
             .bind(&wallet_tx.user_id)
             .bind(wallet_tx.transaction_type.as_str())
             .bind(wallet_tx.amount.cents() as i64)
+            .bind(&wallet_tx.correlation_id) 
+            .bind(&wallet_tx.source_service) 
             .execute(&mut *tx)
             .await.map_err(|e| e.to_string())?;
 
@@ -246,11 +252,13 @@ impl WalletRepository {
             .execute(&mut *tx)
             .await.map_err(|e| e.to_string())?;
        
-        sqlx::query("INSERT INTO wallet_transactions (id, user_id, transaction_type, amount_cents) VALUES (?, ?, ?, ?)")
+        sqlx::query("INSERT INTO wallet_transactions (id, user_id, transaction_type, amount_cents, correlation_id, source_service) VALUES (?, ?, ?, ?, ?, ?)")
             .bind(&wallet_tx.id)
             .bind(&wallet_tx.user_id)
             .bind(wallet_tx.transaction_type.as_str())
             .bind(wallet_tx.amount.cents() as i64)
+            .bind(&wallet_tx.correlation_id)
+            .bind(&wallet_tx.source_service)
             .execute(&mut *tx)
             .await.map_err(|e| e.to_string())?;
 
@@ -281,12 +289,14 @@ impl TransactionRepository {
 
     pub async fn insert(&self, tx: &WalletTransaction) -> Result<(), sqlx::Error> {
         sqlx::query(
-            "INSERT INTO wallet_transactions (id, user_id, transaction_type, amount_cents) VALUES (?, ?, ?, ?)",
+            "INSERT INTO wallet_transactions (id, user_id, transaction_type, amount_cents, correlation_id, source_service) VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(&tx.id)
         .bind(&tx.user_id)
         .bind(tx.transaction_type.as_str())
         .bind(tx.amount.cents() as i64)
+        .bind(&tx.correlation_id)
+        .bind(&tx.source_service)
         .execute(&self.pool)
         .await?;
         Ok(())

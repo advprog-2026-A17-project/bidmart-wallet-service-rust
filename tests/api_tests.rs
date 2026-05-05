@@ -202,7 +202,7 @@ async fn hold_funds_without_internal_token_is_forbidden() {
 
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     let json = body_to_json(resp.into_body()).await;
-    assert_eq!(json["error_code"], "INVALID_INTERNAL_TOKEN");
+    assert_eq!(json["errorCode"], "INVALID_INTERNAL_TOKEN");
 }
 
 #[tokio::test]
@@ -229,6 +229,7 @@ async fn hold_funds_returns_updated_balances() {
         .method("POST")
         .uri("/api/v1/wallet/hold")
         .header("content-type", "application/json")
+        .header("X-Internal-Service-Token", "local-dev-internal-token")
         .body(Body::from(r#"{"userId":"user-1","holdId":"hold-1","auctionId":"auc-1","bidId":"bid-1","amount":4000,"expiresAt":"2026-12-31T23:59:59Z"}"#))
         .unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
@@ -273,6 +274,7 @@ async fn release_funds_returns_updated_balances() {
         .method("POST")
         .uri("/api/v1/wallet/hold")
         .header("content-type", "application/json")
+        .header("X-Internal-Service-Token", "local-dev-internal-token")
         .body(Body::from(r#"{"userId":"user-1","holdId":"hold-2","auctionId":"auc-2","bidId":"bid-2","amount":5000,"expiresAt":"2026-12-31T23:59:59Z"}"#))
         .unwrap();
     let _ = app.clone().oneshot(hold).await.unwrap();
@@ -282,6 +284,7 @@ async fn release_funds_returns_updated_balances() {
         .method("POST")
         .uri("/api/v1/wallet/release")
         .header("content-type", "application/json")
+        .header("X-Internal-Service-Token", "local-dev-internal-token")
         .body(Body::from(r#"{"holdId":"hold-2"}"#))
         .unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
@@ -325,6 +328,7 @@ async fn convert_funds_returns_updated_balances() {
         .method("POST")
         .uri("/api/v1/wallet/hold")
         .header("content-type", "application/json")
+        .header("X-Internal-Service-Token", "local-dev-internal-token")
         .body(Body::from(r#"{"userId":"user-1","holdId":"hold-3","auctionId":"auc-3","bidId":"bid-3","amount":5000,"expiresAt":"2026-12-31T23:59:59Z"}"#))
         .unwrap();
     let _ = app.clone().oneshot(hold).await.unwrap();
@@ -334,6 +338,7 @@ async fn convert_funds_returns_updated_balances() {
         .method("POST")
         .uri("/api/v1/wallet/convert")
         .header("content-type", "application/json")
+        .header("X-Internal-Service-Token", "local-dev-internal-token")
         .body(Body::from(r#"{"holdId":"hold-3"}"#))
         .unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
@@ -534,6 +539,7 @@ async fn hold_insufficient_balance_returns_400() {
         .method("POST")
         .uri("/api/v1/wallet/hold")
         .header("content-type", "application/json")
+        .header("X-Internal-Service-Token", "local-dev-internal-token")
         .body(Body::from(r#"{"userId":"user-1","holdId":"hold-4","auctionId":"auc-4","bidId":"bid-4","amount":9999,"expiresAt":"2026-12-31T23:59:59Z"}"#))
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();

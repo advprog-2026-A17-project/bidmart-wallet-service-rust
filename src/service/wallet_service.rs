@@ -3,7 +3,9 @@ use sqlx::SqlitePool;
 use crate::persistence::repositories::{
     ProvisioningEventRepository, TransactionRepository, WalletRepository,
 };
-use crate::wallet::{Money, Wallet, WalletError, WalletTransaction, Hold};
+use crate::wallet::{
+    Hold, Money, PaymentIntent, Wallet, WalletError, WalletTransaction, WalletWithdrawal,
+};
 
 // ── ServiceError ────────────────────────────────────────────────
 
@@ -16,6 +18,7 @@ pub enum ServiceError {
     TransactionNotFound(String),
     ForbiddenAccess,
     HoldFailed(String),
+    InvalidPaymentStatus(String),
 }
 
 impl From<WalletError> for ServiceError {
@@ -39,6 +42,7 @@ impl std::fmt::Display for ServiceError {
             Self::TransactionNotFound(id) => write!(f, "transaction not found: {id}"),
             Self::ForbiddenAccess => write!(f, "forbidden transaction access"),
             Self::HoldFailed(msg) => write!(f, "hold operation failed: {msg}"),
+            Self::InvalidPaymentStatus(status) => write!(f, "invalid payment status: {status}"),
         }
     }
 }
@@ -99,6 +103,101 @@ impl WalletService {
 
     pub async fn withdraw(&self, user_id: &str, amount: Money) -> Result<Wallet, ServiceError> {
         self.mutate_wallet(user_id, |w| w.withdraw(amount)).await
+    }
+
+    pub async fn create_top_up_intent(
+        &self,
+        user_id: &str,
+        amount: Money,
+    ) -> Result<PaymentIntent, ServiceError> {
+        if amount.is_zero() {
+            return Err(ServiceError::Domain(WalletError::InvalidAmount));
+        }
+        self.find_by_user_id(user_id).await?;
+        Ok(self.wallet_repo.insert_payment_intent(user_id, amount).await?)
+    }
+
+    pub async fn simulate_payment_status(
+        &self,
+        payment_id: &str,
+        status: &str,
+    ) -> Result<PaymentIntent, ServiceError> {
+        let normalized = status.to_ascii_uppercase();
+        if !matches!(normalized.as_str(), "PAID" | "FAILED" | "EXPIRED") {
+            return Err(ServiceError::InvalidPaymentStatus(status.to_string()));
+        }
+
+        let payment = self
+            .wallet_repo
+            .find_payment_intent(payment_id)
+            .await?
+            .ok_or_else(|| ServiceError::TransactionNotFound(payment_id.to_string()))?;
+
+        if payment.status == "PENDING" {
+            if normalized == "PAID" {
+                self.top_up(&payment.user_id, Money::from_cents(payment.amount_cents as u64))
+                    .await?;
+            }
+            self.wallet_repo
+                .update_payment_status(payment_id, &normalized)
+                .await?;
+        }
+
+        self.wallet_repo
+            .find_payment_intent(payment_id)
+            .await?
+            .ok_or_else(|| ServiceError::TransactionNotFound(payment_id.to_string()))
+    }
+
+    pub async fn create_withdrawal(
+        &self,
+        user_id: &str,
+        amount: Money,
+        bank_account: &str,
+    ) -> Result<WalletWithdrawal, ServiceError> {
+        if bank_account.trim().is_empty() {
+            return Err(ServiceError::InvalidPaymentStatus("missing bank account".to_string()));
+        }
+        self.withdraw(user_id, amount).await?;
+        Ok(self
+            .wallet_repo
+            .insert_withdrawal(user_id, amount, bank_account)
+            .await?)
+    }
+
+    pub async fn simulate_withdrawal_status(
+        &self,
+        withdrawal_id: &str,
+        status: &str,
+    ) -> Result<WalletWithdrawal, ServiceError> {
+        let normalized = status.to_ascii_uppercase();
+        if !matches!(normalized.as_str(), "COMPLETED" | "FAILED") {
+            return Err(ServiceError::InvalidPaymentStatus(status.to_string()));
+        }
+
+        let withdrawal = self
+            .wallet_repo
+            .find_withdrawal(withdrawal_id)
+            .await?
+            .ok_or_else(|| ServiceError::TransactionNotFound(withdrawal_id.to_string()))?;
+
+        if withdrawal.status == "PENDING" {
+            if normalized == "FAILED" {
+                self.top_up(
+                    &withdrawal.user_id,
+                    Money::from_cents(withdrawal.amount_cents as u64),
+                )
+                .await?;
+            }
+            self.wallet_repo
+                .update_withdrawal_status(withdrawal_id, &normalized)
+                .await?;
+        }
+
+        self.wallet_repo
+            .find_withdrawal(withdrawal_id)
+            .await?
+            .ok_or_else(|| ServiceError::TransactionNotFound(withdrawal_id.to_string()))
     }
 
     pub async fn hold(&self, user_id: &str, amount: Money) -> Result<Wallet, ServiceError> {

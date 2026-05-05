@@ -39,3 +39,6 @@ CREATE TABLE IF NOT EXISTS holds (
 
 CREATE INDEX idx_holds_auction_bid ON holds(auction_id, bid_id);
 CREATE INDEX idx_holds_wallet ON holds(wallet_id);
+
+ALTER TABLE wallet_transactions ADD COLUMN correlation_id TEXT;
+ALTER TABLE wallet_transactions ADD COLUMN source_service TEXT;

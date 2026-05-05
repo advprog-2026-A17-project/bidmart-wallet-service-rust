@@ -4,9 +4,6 @@ use std::ops::{Add, Sub};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use chrono::{DateTime, Utc};
-use uuid::Uuid;
-
 // ── Money ────────────────────────────────────────────────────────
 
 /// Monetary value stored as whole cents to avoid floating-point precision issues.
@@ -131,6 +128,8 @@ pub struct WalletTransaction {
     pub user_id: String,
     pub transaction_type: TransactionType,
     pub amount: Money,
+    pub correlation_id: Option<String>,
+    pub source_service: Option<String>,
 }
 
 impl WalletTransaction {
@@ -140,6 +139,8 @@ impl WalletTransaction {
             user_id: user_id.to_string(),
             transaction_type,
             amount,
+            correlation_id: None,
+            source_service: None,
         }
     }
 }

@@ -296,6 +296,16 @@ impl WalletRepository {
         hold.status = HoldStatus::Converted;
         Ok(hold)
     }
+
+    pub async fn find_expired_holds(&self) -> Result<Vec<String>, sqlx::Error> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT id FROM holds WHERE status = 'ACTIVE' AND expires_at < datetime('now')"
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        
+        Ok(rows.into_iter().map(|r| r.0).collect())
+    }
 }
 
 // ── TransactionRepository ───────────────────────────────────────

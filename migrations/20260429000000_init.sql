@@ -42,3 +42,4 @@ CREATE INDEX idx_holds_wallet ON holds(wallet_id);
 
 ALTER TABLE wallet_transactions ADD COLUMN correlation_id TEXT;
 ALTER TABLE wallet_transactions ADD COLUMN source_service TEXT;
+ALTER TABLE wallets ADD COLUMN version INTEGER NOT NULL DEFAULT 0;

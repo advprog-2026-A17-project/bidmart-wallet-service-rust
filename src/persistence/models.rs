@@ -17,6 +17,8 @@ pub struct TransactionRow {
     pub transaction_type: String,
     pub amount_cents: i64,
     pub created_at: String,
+    pub correlation_id: Option<String>,
+    pub source_service: Option<String>,
 }
 
 /// Database row for the wallet_provisioning_events table.

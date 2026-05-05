@@ -16,21 +16,23 @@ pub struct WalletCreateRequest {
 #[serde(rename_all = "camelCase")]
 pub struct HoldFundsRequest {
     pub user_id: String,
+    pub hold_id: String,
+    pub auction_id: String,
+    pub bid_id: String,
     pub amount: u64,
+    pub expires_at: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReleaseFundsRequest {
-    pub user_id: String,
-    pub amount: u64,
+    pub hold_id: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvertFundsRequest {
-    pub user_id: String,
-    pub amount: u64,
+    pub hold_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -71,6 +73,27 @@ pub struct ErrorResponse {
     pub error: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HoldResponse {
+    pub id: String,
+    pub wallet_id: String,
+    pub auction_id: String,
+    pub bid_id: String,
+    pub amount: u64,
+    pub status: String,
+    pub expires_at: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StructuredErrorResponse {
+    pub error_code: String,
+    pub message: String,
+}
+
 // ── Conversions ─────────────────────────────────────────────────
 
 impl From<&Wallet> for WalletResponse {
@@ -91,6 +114,22 @@ impl From<&WalletTransaction> for WalletTransactionResponse {
             user_id: tx.user_id.clone(),
             transaction_type: tx.transaction_type.as_str().to_string(),
             amount: tx.amount.cents(),
+        }
+    }
+}
+
+impl From<&crate::wallet::Hold> for HoldResponse {
+    fn from(h: &crate::wallet::Hold) -> Self {
+        Self {
+            id: h.id.clone(),
+            wallet_id: h.wallet_id.clone(),
+            auction_id: h.auction_id.clone(),
+            bid_id: h.bid_id.clone(),
+            amount: h.amount as u64,
+            status: h.status.to_string(), // Menggunakan trait Display yang baru kita buat
+            expires_at: h.expires_at.clone(),
+            created_at: h.created_at.clone(),
+            updated_at: h.updated_at.clone(),
         }
     }
 }

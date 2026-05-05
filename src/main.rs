@@ -1,5 +1,8 @@
 use std::env;
+use std::sync::Arc;
 
+use bidmart_wallet_service_rust::service::reconciliation::run_reconciliation_worker; 
+use bidmart_wallet_service_rust::persistence::repositories::WalletRepository;
 use bidmart_wallet_service_rust::server;
 use dotenvy::from_path;
 
@@ -19,6 +22,11 @@ async fn main() {
     server::run_migrations(&pool)
         .await
         .expect("failed to run migrations");
+
+    let worker_repo = Arc::new(WalletRepository::new(pool.clone()));
+    tokio::spawn(async move {
+        run_reconciliation_worker(worker_repo).await;
+    });
 
     let app = server::build_router(pool);
 

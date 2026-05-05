@@ -42,3 +42,29 @@ CREATE TABLE IF NOT EXISTS holds (
 
 CREATE INDEX IF NOT EXISTS idx_holds_auction_bid ON holds(auction_id, bid_id);
 CREATE INDEX IF NOT EXISTS idx_holds_wallet ON holds(wallet_id);
+
+CREATE TABLE IF NOT EXISTS wallet_payment_intents (
+    id           TEXT PRIMARY KEY,
+    user_id      TEXT NOT NULL,
+    amount_cents INTEGER NOT NULL,
+    status       TEXT NOT NULL,
+    redirect_url TEXT NOT NULL,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_payment_intents_user_id
+    ON wallet_payment_intents(user_id);
+
+CREATE TABLE IF NOT EXISTS wallet_withdrawals (
+    id           TEXT PRIMARY KEY,
+    user_id      TEXT NOT NULL,
+    amount_cents INTEGER NOT NULL,
+    bank_account TEXT NOT NULL,
+    status       TEXT NOT NULL,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_withdrawals_user_id
+    ON wallet_withdrawals(user_id);

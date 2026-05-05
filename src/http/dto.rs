@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::wallet::{Money, Wallet, WalletTransaction};
+use crate::wallet::{PaymentIntent, Wallet, WalletTransaction, WalletWithdrawal};
 
 // ── Request DTOs ────────────────────────────────────────────────
 
@@ -38,6 +38,24 @@ pub struct ConvertFundsRequest {
 #[derive(Debug, Deserialize)]
 pub struct AmountQuery {
     pub amount: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PaymentIntentRequest {
+    pub amount_cents: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WithdrawalRequest {
+    pub amount_cents: u64,
+    pub bank_account: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MidtransSimulationRequest {
+    pub status: String,
 }
 
 // ── Response DTOs ───────────────────────────────────────────────
@@ -94,6 +112,23 @@ pub struct StructuredErrorResponse {
     pub message: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PaymentIntentResponse {
+    pub payment_id: String,
+    pub amount_cents: u64,
+    pub status: String,
+    pub redirect_url: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WithdrawalResponse {
+    pub withdrawal_id: String,
+    pub amount_cents: u64,
+    pub status: String,
+}
+
 // ── Conversions ─────────────────────────────────────────────────
 
 impl From<&Wallet> for WalletResponse {
@@ -130,6 +165,27 @@ impl From<&crate::wallet::Hold> for HoldResponse {
             expires_at: h.expires_at.clone(),
             created_at: h.created_at.clone(),
             updated_at: h.updated_at.clone(),
+        }
+    }
+}
+
+impl From<&PaymentIntent> for PaymentIntentResponse {
+    fn from(payment: &PaymentIntent) -> Self {
+        Self {
+            payment_id: payment.id.clone(),
+            amount_cents: payment.amount_cents as u64,
+            status: payment.status.clone(),
+            redirect_url: payment.redirect_url.clone(),
+        }
+    }
+}
+
+impl From<&WalletWithdrawal> for WithdrawalResponse {
+    fn from(withdrawal: &WalletWithdrawal) -> Self {
+        Self {
+            withdrawal_id: withdrawal.id.clone(),
+            amount_cents: withdrawal.amount_cents as u64,
+            status: withdrawal.status.clone(),
         }
     }
 }

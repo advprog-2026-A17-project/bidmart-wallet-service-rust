@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -11,6 +11,7 @@ use crate::service::wallet_service::{ServiceError, WalletService};
 use crate::wallet::{Money, WalletError};
 
 type AppState = Arc<WalletService>;
+const DEFAULT_INTERNAL_TOKEN: &str = "local-dev-internal-token";
 
 pub fn create_router(service: WalletService) -> Router {
     let state: AppState = Arc::new(service);
@@ -117,8 +118,10 @@ async fn simulate_payment(
 
 async fn hold_funds(
     State(svc): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<HoldFundsRequest>,
 ) -> impl IntoResponse {
+    require_internal_token(&headers)?;
     // Kita akan memanggil metode hold_funds di Service yang meneruskan semua data
     match svc.hold_funds(
         &req.user_id,
@@ -135,8 +138,10 @@ async fn hold_funds(
 
 async fn release_funds(
     State(svc): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<ReleaseFundsRequest>,
 ) -> impl IntoResponse {
+    require_internal_token(&headers)?;
     match svc.release_funds(&req.hold_id).await {
         Ok(hold) => Ok(Json(HoldResponse::from(&hold))),
         Err(e) => Err(map_error(e)),
@@ -145,8 +150,10 @@ async fn release_funds(
 
 async fn convert_funds(
     State(svc): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<ConvertFundsRequest>,
 ) -> impl IntoResponse {
+    require_internal_token(&headers)?;
     match svc.convert_funds(&req.hold_id).await {
         Ok(hold) => Ok(Json(HoldResponse::from(&hold))),
         Err(e) => Err(map_error(e)),
@@ -208,6 +215,28 @@ async fn simulate_withdrawal(
 }
 
 // ── Error mapping ───────────────────────────────────────────────
+
+fn require_internal_token(
+    headers: &HeaderMap,
+) -> Result<(), (StatusCode, Json<StructuredErrorResponse>)> {
+    let expected_token = std::env::var("GATEWAY_INTERNAL_TOKEN")
+        .unwrap_or_else(|_| DEFAULT_INTERNAL_TOKEN.to_string());
+    let provided_token = headers
+        .get("x-internal-service-token")
+        .and_then(|value| value.to_str().ok());
+
+    if provided_token == Some(expected_token.as_str()) {
+        return Ok(());
+    }
+
+    Err((
+        StatusCode::FORBIDDEN,
+        Json(StructuredErrorResponse {
+            error_code: "INVALID_INTERNAL_TOKEN".to_string(),
+            message: "invalid internal service token".to_string(),
+        }),
+    ))
+}
 
 fn map_error(e: ServiceError) -> (StatusCode, Json<StructuredErrorResponse>) {
     let (status, code, message) = match &e {

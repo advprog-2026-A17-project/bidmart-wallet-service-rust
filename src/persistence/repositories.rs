@@ -46,7 +46,7 @@ impl WalletRepository {
 
     pub async fn insert(&self, wallet: &Wallet) -> Result<(), sqlx::Error> {
         let sql = format!(
-            "INSERT INTO wallets ({WALLET_COLS}) VALUES (?, ?, ?, ?)"
+            "INSERT INTO wallets ({WALLET_COLS}) VALUES (?, ?, ?, ?,?)"
         );
         sqlx::query(&sql)
             .bind(wallet.id())

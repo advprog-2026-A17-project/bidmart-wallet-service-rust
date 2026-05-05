@@ -8,7 +8,7 @@ use axum::{Json, Router};
 
 use crate::http::dto::*;
 use crate::service::wallet_service::{ServiceError, WalletService};
-use crate::wallet::Money;
+use crate::wallet::{Money, WalletError};
 
 type AppState = Arc<WalletService>;
 
@@ -87,8 +87,16 @@ async fn hold_funds(
     State(svc): State<AppState>,
     Json(req): Json<HoldFundsRequest>,
 ) -> impl IntoResponse {
-    match svc.hold(&req.user_id, Money::from_cents(req.amount)).await {
-        Ok(w) => Ok(Json(WalletResponse::from(&w))),
+    // Kita akan memanggil metode hold_funds di Service yang meneruskan semua data
+    match svc.hold_funds(
+        &req.user_id,
+        &req.auction_id,
+        &req.bid_id,
+        Money::from_cents(req.amount),
+        &req.hold_id,
+        &req.expires_at,
+    ).await {
+        Ok(hold) => Ok(Json(HoldResponse::from(&hold))),
         Err(e) => Err(map_error(e)),
     }
 }
@@ -97,8 +105,8 @@ async fn release_funds(
     State(svc): State<AppState>,
     Json(req): Json<ReleaseFundsRequest>,
 ) -> impl IntoResponse {
-    match svc.release(&req.user_id, Money::from_cents(req.amount)).await {
-        Ok(w) => Ok(Json(WalletResponse::from(&w))),
+    match svc.release_funds(&req.hold_id).await {
+        Ok(hold) => Ok(Json(HoldResponse::from(&hold))),
         Err(e) => Err(map_error(e)),
     }
 }
@@ -107,8 +115,8 @@ async fn convert_funds(
     State(svc): State<AppState>,
     Json(req): Json<ConvertFundsRequest>,
 ) -> impl IntoResponse {
-    match svc.convert(&req.user_id, Money::from_cents(req.amount)).await {
-        Ok(w) => Ok(Json(WalletResponse::from(&w))),
+    match svc.convert_funds(&req.hold_id).await {
+        Ok(hold) => Ok(Json(HoldResponse::from(&hold))),
         Err(e) => Err(map_error(e)),
     }
 }
@@ -137,15 +145,48 @@ async fn withdraw(
 
 // ── Error mapping ───────────────────────────────────────────────
 
-fn map_error(e: ServiceError) -> (StatusCode, Json<ErrorResponse>) {
-    let (status, message) = match &e {
-        ServiceError::WalletNotFound(_) => (StatusCode::NOT_FOUND, e.to_string()),
-        ServiceError::Domain(_) => (StatusCode::BAD_REQUEST, e.to_string()),
-        ServiceError::TransactionNotFound(_) => (StatusCode::NOT_FOUND, e.to_string()),
-        ServiceError::ForbiddenAccess => (StatusCode::FORBIDDEN, e.to_string()),
-        ServiceError::Persistence(_) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, "internal server error".to_string())
-        }
+fn map_error(e: ServiceError) -> (StatusCode, Json<StructuredErrorResponse>) {
+    let (status, code, message) = match &e {
+        ServiceError::WalletNotFound(_) => (
+            StatusCode::NOT_FOUND, 
+            "WALLET_NOT_FOUND", 
+            e.to_string()
+        ),
+        ServiceError::Domain(wallet_err) => {
+            let code = match wallet_err {
+                WalletError::InsufficientActiveBalance => "INSUFFICIENT_ACTIVE_BALANCE",
+                WalletError::InsufficientHeldBalance => "INSUFFICIENT_HELD_BALANCE",
+                WalletError::InvalidAmount => "INVALID_AMOUNT",
+            };
+            (StatusCode::BAD_REQUEST, code, e.to_string())
+        },
+        ServiceError::TransactionNotFound(_) => (
+            StatusCode::NOT_FOUND, 
+            "TRANSACTION_NOT_FOUND", 
+            e.to_string()
+        ),
+        ServiceError::ForbiddenAccess => (
+            StatusCode::FORBIDDEN, 
+            "FORBIDDEN_ACCESS", 
+            e.to_string()
+        ),
+        ServiceError::Persistence(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR, 
+            "INTERNAL_ERROR", 
+            "internal server error".to_string()
+        ),
+        ServiceError::HoldFailed(msg) => {
+            let code = if msg.contains("Insufficient active balance") {
+                "INSUFFICIENT_ACTIVE_BALANCE"
+            } else {
+                "HOLD_OPERATION_FAILED"
+            };
+            (StatusCode::BAD_REQUEST, code, msg.clone())
+        },
     };
-    (status, Json(ErrorResponse { error: message }))
+
+    (status, Json(StructuredErrorResponse { 
+        error_code: code.to_string(), 
+        message 
+    }))
 }

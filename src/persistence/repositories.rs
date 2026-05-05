@@ -1,13 +1,14 @@
 use sqlx::SqlitePool;
 
-use crate::persistence::models::{ProvisioningEventRow, TransactionRow, WalletRow};
-use crate::wallet::{Money, TransactionType, Wallet, WalletTransaction};
+use crate::persistence::models::{ProvisioningEventRow, TransactionRow, WalletRow, HoldRow};
+use crate::wallet::{Money, TransactionType, Wallet, WalletTransaction, Hold, HoldStatus};
 
 // ── Column lists (DRY) ──────────────────────────────────────────
 
-const WALLET_COLS: &str = "id, user_id, active_balance_cents, held_balance_cents";
-const TX_COLS: &str = "id, user_id, transaction_type, amount_cents, created_at";
+const WALLET_COLS: &str = "id, user_id, active_balance_cents, held_balance_cents, version";
+const TX_COLS: &str = "id, user_id, transaction_type, amount_cents, created_at, correlation_id, source_service";
 const PROV_COLS: &str = "event_id, user_id, email, occurred_at, source, processed_at";
+const HOLD_COLS: &str = "id, wallet_id, auction_id, bid_id, amount, status, expires_at, created_at, updated_at";
 
 // ── Row → Domain mappers ────────────────────────────────────────
 
@@ -17,6 +18,7 @@ fn wallet_from_row(row: WalletRow) -> Wallet {
         row.user_id,
         Money::from_cents(row.active_balance_cents as u64),
         Money::from_cents(row.held_balance_cents as u64),
+        row.version,
     )
 }
 
@@ -26,6 +28,8 @@ fn transaction_from_row(row: TransactionRow) -> WalletTransaction {
         user_id: row.user_id,
         transaction_type: TransactionType::from_str(&row.transaction_type),
         amount: Money::from_cents(row.amount_cents as u64),
+        correlation_id: row.correlation_id,
+        source_service: row.source_service,
     }
 }
 
@@ -42,13 +46,14 @@ impl WalletRepository {
 
     pub async fn insert(&self, wallet: &Wallet) -> Result<(), sqlx::Error> {
         let sql = format!(
-            "INSERT INTO wallets ({WALLET_COLS}) VALUES (?, ?, ?, ?)"
+            "INSERT INTO wallets ({WALLET_COLS}) VALUES (?, ?, ?, ?,?)"
         );
         sqlx::query(&sql)
             .bind(wallet.id())
             .bind(wallet.user_id())
             .bind(wallet.active_balance().cents() as i64)
             .bind(wallet.held_balance().cents() as i64)
+            .bind(wallet.version())
             .execute(&self.pool)
             .await?;
         Ok(())
@@ -66,15 +71,20 @@ impl WalletRepository {
         Ok(row.map(wallet_from_row))
     }
 
-    pub async fn update(&self, wallet: &Wallet) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            "UPDATE wallets SET active_balance_cents = ?, held_balance_cents = ? WHERE id = ?",
+   pub async fn update(&self, wallet: &Wallet) -> Result<(), sqlx::Error> {
+        let result = sqlx::query(
+            "UPDATE wallets SET active_balance_cents = ?, held_balance_cents = ?, version = version + 1 WHERE id = ? AND version = ?",
         )
         .bind(wallet.active_balance().cents() as i64)
         .bind(wallet.held_balance().cents() as i64)
         .bind(wallet.id())
+        .bind(wallet.version()) // 👈 Cek versi saat ini
         .execute(&self.pool)
         .await?;
+    
+        if result.rows_affected() == 0 {
+            return Err(sqlx::Error::RowNotFound); 
+        }
         Ok(())
     }
 
@@ -85,6 +95,216 @@ impl WalletRepository {
             .await?;
 
         Ok(rows.into_iter().map(wallet_from_row).collect())
+    }
+
+    pub async fn hold_funds(
+        &self,
+        wallet_id: &str,
+        auction_id: &str,
+        bid_id: &str,
+        amount: Money,
+        hold_id: &str,
+        expires_at: &str,
+    ) -> Result<Hold, String> {
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        let existing_hold_sql = format!("SELECT {HOLD_COLS} FROM holds WHERE bid_id = ? AND auction_id = ?");
+        let existing_hold: Option<HoldRow> = sqlx::query_as(&existing_hold_sql)
+            .bind(bid_id)
+            .bind(auction_id)
+            .fetch_optional(&mut *tx)
+            .await.map_err(|e| e.to_string())?;
+
+        if let Some(row) = existing_hold {
+            return Hold::try_from(row); 
+        }
+
+        let wallet_sql = format!("SELECT {WALLET_COLS} FROM wallets WHERE id = ?");
+        let wallet_row: Option<WalletRow> = sqlx::query_as(&wallet_sql)
+            .bind(wallet_id)
+            .fetch_optional(&mut *tx)
+            .await.map_err(|e| e.to_string())?;
+
+        let mut wallet = wallet_row.map(wallet_from_row).ok_or("Wallet not found")?;
+
+        let wallet_tx = wallet.hold(amount).map_err(|e| e.to_string())?;
+
+        let result = sqlx::query("UPDATE wallets SET active_balance_cents = ?, held_balance_cents = ?, version = version + 1 WHERE id = ? AND version = ?")
+            .bind(wallet.active_balance().cents() as i64)
+            .bind(wallet.held_balance().cents() as i64)
+            .bind(wallet.id())
+            .bind(wallet.version())
+            .execute(&mut *tx)
+            .await.map_err(|e| e.to_string())?;
+
+        if result.rows_affected() == 0 {
+            return Err("CONCURRENCY_CONFLICT: Wallet is being modified by another operation. Please try again.".to_string());
+        }
+
+        sqlx::query("INSERT INTO wallet_transactions (id, user_id, transaction_type, amount_cents, correlation_id, source_service) VALUES (?, ?, ?, ?, ?, ?)")
+            .bind(&wallet_tx.id)
+            .bind(&wallet_tx.user_id)
+            .bind(wallet_tx.transaction_type.as_str())
+            .bind(wallet_tx.amount.cents() as i64)
+            .bind(&wallet_tx.correlation_id) 
+            .bind(&wallet_tx.source_service)
+            .execute(&mut *tx)
+            .await.map_err(|e| e.to_string())?;
+
+        let status_str = HoldStatus::Active.to_string();
+        sqlx::query("INSERT INTO holds (id, wallet_id, auction_id, bid_id, amount, status, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+            .bind(hold_id)
+            .bind(wallet_id)
+            .bind(auction_id)
+            .bind(bid_id)
+            .bind(amount.cents() as i64)
+            .bind(&status_str)
+            .bind(expires_at)
+            .execute(&mut *tx)
+            .await.map_err(|e| e.to_string())?;
+
+        tx.commit().await.map_err(|e| e.to_string())?;
+
+        let new_hold_sql = format!("SELECT {HOLD_COLS} FROM holds WHERE id = ?");
+        let new_hold_row: HoldRow = sqlx::query_as(&new_hold_sql)
+            .bind(hold_id)
+            .fetch_one(&self.pool)
+            .await.map_err(|e| e.to_string())?;
+
+        Hold::try_from(new_hold_row)
+    }
+
+    pub async fn release_funds(&self, hold_id: &str) -> Result<Hold, String> {
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+
+        let hold_sql = format!("SELECT {HOLD_COLS} FROM holds WHERE id = ?");
+        let hold_row: Option<HoldRow> = sqlx::query_as(&hold_sql)
+            .bind(hold_id)
+            .fetch_optional(&mut *tx)
+            .await.map_err(|e| e.to_string())?;
+
+        let hold_row = hold_row.ok_or("Hold record not found")?;
+        let mut hold = Hold::try_from(hold_row)?;
+
+        if hold.status != HoldStatus::Active {
+            return Ok(hold);
+        }
+
+        let wallet_sql = format!("SELECT {WALLET_COLS} FROM wallets WHERE id = ?");
+        let wallet_row: Option<WalletRow> = sqlx::query_as(&wallet_sql)
+            .bind(&hold.wallet_id)
+            .fetch_optional(&mut *tx)
+            .await.map_err(|e| e.to_string())?;
+
+        let mut wallet = wallet_row.map(wallet_from_row).ok_or("Wallet not found")?;
+
+        let amount_money = Money::from_cents(hold.amount as u64);
+        let wallet_tx = wallet.release(amount_money).map_err(|e| e.to_string())?;
+
+        let result = sqlx::query("UPDATE wallets SET active_balance_cents = ?, held_balance_cents = ?, version = version + 1 WHERE id = ? AND version = ?")
+            .bind(wallet.active_balance().cents() as i64)
+            .bind(wallet.held_balance().cents() as i64)
+            .bind(wallet.id())
+            .bind(wallet.version())
+            .execute(&mut *tx)
+            .await.map_err(|e| e.to_string())?;
+
+        if result.rows_affected() == 0 {
+            return Err("CONCURRENCY_CONFLICT: Wallet is being modified by another operation. Please try again.".to_string());
+        }
+
+        sqlx::query("INSERT INTO wallet_transactions (id, user_id, transaction_type, amount_cents, correlation_id, source_service) VALUES (?, ?, ?, ?, ?, ?)")
+            .bind(&wallet_tx.id)
+            .bind(&wallet_tx.user_id)
+            .bind(wallet_tx.transaction_type.as_str())
+            .bind(wallet_tx.amount.cents() as i64)
+            .bind(&wallet_tx.correlation_id) 
+            .bind(&wallet_tx.source_service) 
+            .execute(&mut *tx)
+            .await.map_err(|e| e.to_string())?;
+
+        let released_status = HoldStatus::Released.to_string();
+        sqlx::query("UPDATE holds SET status = ?, updated_at = datetime('now') WHERE id = ?")
+            .bind(&released_status)
+            .bind(hold_id)
+            .execute(&mut *tx)
+            .await.map_err(|e| e.to_string())?;
+
+        tx.commit().await.map_err(|e| e.to_string())?;
+
+        hold.status = HoldStatus::Released;
+        Ok(hold)
+    }
+
+    pub async fn convert_funds(&self, hold_id: &str) -> Result<Hold, String> {
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+
+        let hold_sql = format!("SELECT {HOLD_COLS} FROM holds WHERE id = ?");
+        let hold_row: Option<HoldRow> = sqlx::query_as(&hold_sql)
+            .bind(hold_id)
+            .fetch_optional(&mut *tx)
+            .await.map_err(|e| e.to_string())?;
+
+        let hold_row = hold_row.ok_or("Hold record not found")?;
+        let mut hold = Hold::try_from(hold_row)?;
+
+        if hold.status != HoldStatus::Active {
+            return Ok(hold);
+        }
+
+        let wallet_sql = format!("SELECT {WALLET_COLS} FROM wallets WHERE id = ?");
+        let wallet_row: Option<WalletRow> = sqlx::query_as(&wallet_sql)
+            .bind(&hold.wallet_id)
+            .fetch_optional(&mut *tx)
+            .await.map_err(|e| e.to_string())?;
+
+        let mut wallet = wallet_row.map(wallet_from_row).ok_or("Wallet not found")?;
+
+        let amount_money = Money::from_cents(hold.amount as u64);
+        let wallet_tx = wallet.convert(amount_money).map_err(|e| e.to_string())?;
+
+        let result = sqlx::query("UPDATE wallets SET active_balance_cents = ?, held_balance_cents = ?, version = version + 1 WHERE id = ? AND version = ?")
+            .bind(wallet.active_balance().cents() as i64)
+            .bind(wallet.held_balance().cents() as i64)
+            .bind(wallet.id())
+            .bind(wallet.version())
+            .execute(&mut *tx)
+            .await.map_err(|e| e.to_string())?;
+        
+        if result.rows_affected() == 0 {
+            return Err("CONCURRENCY_CONFLICT: Wallet is being modified by another operation. Please try again.".to_string());
+        }
+       
+        sqlx::query("INSERT INTO wallet_transactions (id, user_id, transaction_type, amount_cents, correlation_id, source_service) VALUES (?, ?, ?, ?, ?, ?)")
+            .bind(&wallet_tx.id)
+            .bind(&wallet_tx.user_id)
+            .bind(wallet_tx.transaction_type.as_str())
+            .bind(wallet_tx.amount.cents() as i64)
+            .bind(&wallet_tx.correlation_id)
+            .bind(&wallet_tx.source_service)
+            .execute(&mut *tx)
+            .await.map_err(|e| e.to_string())?;
+
+        let converted_status = HoldStatus::Converted.to_string();
+        sqlx::query("UPDATE holds SET status = ?, updated_at = datetime('now') WHERE id = ?")
+            .bind(&converted_status)
+            .bind(hold_id)
+            .execute(&mut *tx)
+            .await.map_err(|e| e.to_string())?;
+
+        tx.commit().await.map_err(|e| e.to_string())?;
+
+        hold.status = HoldStatus::Converted;
+        Ok(hold)
+    }
+
+    pub async fn find_expired_holds(&self) -> Result<Vec<String>, sqlx::Error> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT id FROM holds WHERE status = 'ACTIVE' AND expires_at < datetime('now')"
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        
+        Ok(rows.into_iter().map(|r| r.0).collect())
     }
 }
 
@@ -101,12 +321,14 @@ impl TransactionRepository {
 
     pub async fn insert(&self, tx: &WalletTransaction) -> Result<(), sqlx::Error> {
         sqlx::query(
-            "INSERT INTO wallet_transactions (id, user_id, transaction_type, amount_cents) VALUES (?, ?, ?, ?)",
+            "INSERT INTO wallet_transactions (id, user_id, transaction_type, amount_cents, correlation_id, source_service) VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(&tx.id)
         .bind(&tx.user_id)
         .bind(tx.transaction_type.as_str())
         .bind(tx.amount.cents() as i64)
+        .bind(&tx.correlation_id)
+        .bind(&tx.source_service)
         .execute(&self.pool)
         .await?;
         Ok(())

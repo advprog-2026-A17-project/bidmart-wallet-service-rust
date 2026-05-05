@@ -5,7 +5,7 @@ use crate::wallet::{Money, TransactionType, Wallet, WalletTransaction, Hold, Hol
 
 // ── Column lists (DRY) ──────────────────────────────────────────
 
-const WALLET_COLS: &str = "id, user_id, active_balance_cents, held_balance_cents";
+const WALLET_COLS: &str = "id, user_id, active_balance_cents, held_balance_cents, version";
 const TX_COLS: &str = "id, user_id, transaction_type, amount_cents, created_at, correlation_id, source_service";
 const PROV_COLS: &str = "event_id, user_id, email, occurred_at, source, processed_at";
 const HOLD_COLS: &str = "id, wallet_id, auction_id, bid_id, amount, status, expires_at, created_at, updated_at";
@@ -18,6 +18,7 @@ fn wallet_from_row(row: WalletRow) -> Wallet {
         row.user_id,
         Money::from_cents(row.active_balance_cents as u64),
         Money::from_cents(row.held_balance_cents as u64),
+        row.version,
     )
 }
 
@@ -52,6 +53,7 @@ impl WalletRepository {
             .bind(wallet.user_id())
             .bind(wallet.active_balance().cents() as i64)
             .bind(wallet.held_balance().cents() as i64)
+            .bind(wallet.version())
             .execute(&self.pool)
             .await?;
         Ok(())
@@ -69,15 +71,20 @@ impl WalletRepository {
         Ok(row.map(wallet_from_row))
     }
 
-    pub async fn update(&self, wallet: &Wallet) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            "UPDATE wallets SET active_balance_cents = ?, held_balance_cents = ? WHERE id = ?",
+   pub async fn update(&self, wallet: &Wallet) -> Result<(), sqlx::Error> {
+        let result = sqlx::query(
+            "UPDATE wallets SET active_balance_cents = ?, held_balance_cents = ?, version = version + 1 WHERE id = ? AND version = ?",
         )
         .bind(wallet.active_balance().cents() as i64)
         .bind(wallet.held_balance().cents() as i64)
         .bind(wallet.id())
+        .bind(wallet.version()) // 👈 Cek versi saat ini
         .execute(&self.pool)
         .await?;
+    
+        if result.rows_affected() == 0 {
+            return Err(sqlx::Error::RowNotFound); 
+        }
         Ok(())
     }
 
@@ -121,12 +128,17 @@ impl WalletRepository {
 
         let wallet_tx = wallet.hold(amount).map_err(|e| e.to_string())?;
 
-        sqlx::query("UPDATE wallets SET active_balance_cents = ?, held_balance_cents = ? WHERE id = ?")
+        let result = sqlx::query("UPDATE wallets SET active_balance_cents = ?, held_balance_cents = ?, version = version + 1 WHERE id = ? AND version = ?")
             .bind(wallet.active_balance().cents() as i64)
             .bind(wallet.held_balance().cents() as i64)
             .bind(wallet.id())
+            .bind(wallet.version())
             .execute(&mut *tx)
             .await.map_err(|e| e.to_string())?;
+
+        if result.rows_affected() == 0 {
+            return Err("CONCURRENCY_CONFLICT: Wallet is being modified by another operation. Please try again.".to_string());
+        }
 
         sqlx::query("INSERT INTO wallet_transactions (id, user_id, transaction_type, amount_cents, correlation_id, source_service) VALUES (?, ?, ?, ?, ?, ?)")
             .bind(&wallet_tx.id)
@@ -188,12 +200,17 @@ impl WalletRepository {
         let amount_money = Money::from_cents(hold.amount as u64);
         let wallet_tx = wallet.release(amount_money).map_err(|e| e.to_string())?;
 
-        sqlx::query("UPDATE wallets SET active_balance_cents = ?, held_balance_cents = ? WHERE id = ?")
+        let result = sqlx::query("UPDATE wallets SET active_balance_cents = ?, held_balance_cents = ?, version = version + 1 WHERE id = ? AND version = ?")
             .bind(wallet.active_balance().cents() as i64)
             .bind(wallet.held_balance().cents() as i64)
             .bind(wallet.id())
+            .bind(wallet.version())
             .execute(&mut *tx)
             .await.map_err(|e| e.to_string())?;
+
+        if result.rows_affected() == 0 {
+            return Err("CONCURRENCY_CONFLICT: Wallet is being modified by another operation. Please try again.".to_string());
+        }
 
         sqlx::query("INSERT INTO wallet_transactions (id, user_id, transaction_type, amount_cents, correlation_id, source_service) VALUES (?, ?, ?, ?, ?, ?)")
             .bind(&wallet_tx.id)
@@ -245,12 +262,17 @@ impl WalletRepository {
         let amount_money = Money::from_cents(hold.amount as u64);
         let wallet_tx = wallet.convert(amount_money).map_err(|e| e.to_string())?;
 
-        sqlx::query("UPDATE wallets SET active_balance_cents = ?, held_balance_cents = ? WHERE id = ?")
+        let result = sqlx::query("UPDATE wallets SET active_balance_cents = ?, held_balance_cents = ?, version = version + 1 WHERE id = ? AND version = ?")
             .bind(wallet.active_balance().cents() as i64)
             .bind(wallet.held_balance().cents() as i64)
             .bind(wallet.id())
+            .bind(wallet.version())
             .execute(&mut *tx)
             .await.map_err(|e| e.to_string())?;
+        
+        if result.rows_affected() == 0 {
+            return Err("CONCURRENCY_CONFLICT: Wallet is being modified by another operation. Please try again.".to_string());
+        }
        
         sqlx::query("INSERT INTO wallet_transactions (id, user_id, transaction_type, amount_cents, correlation_id, source_service) VALUES (?, ?, ?, ?, ?, ?)")
             .bind(&wallet_tx.id)

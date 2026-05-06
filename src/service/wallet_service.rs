@@ -1,4 +1,4 @@
-use sqlx::SqlitePool;
+use sqlx::AnyPool;
 
 use crate::persistence::repositories::{
     ProvisioningEventRepository, TransactionRepository, WalletRepository,
@@ -61,7 +61,7 @@ pub struct WalletService {
 }
 
 impl WalletService {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: AnyPool) -> Self {
         Self {
             wallet_repo: WalletRepository::new(pool.clone()),
             tx_repo: TransactionRepository::new(pool.clone()),
@@ -114,7 +114,10 @@ impl WalletService {
             return Err(ServiceError::Domain(WalletError::InvalidAmount));
         }
         self.find_by_user_id(user_id).await?;
-        Ok(self.wallet_repo.insert_payment_intent(user_id, amount).await?)
+        Ok(self
+            .wallet_repo
+            .insert_payment_intent(user_id, amount)
+            .await?)
     }
 
     pub async fn simulate_payment_status(
@@ -135,8 +138,11 @@ impl WalletService {
 
         if payment.status == "PENDING" {
             if normalized == "PAID" {
-                self.top_up(&payment.user_id, Money::from_cents(payment.amount_cents as u64))
-                    .await?;
+                self.top_up(
+                    &payment.user_id,
+                    Money::from_cents(payment.amount_cents as u64),
+                )
+                .await?;
             }
             self.wallet_repo
                 .update_payment_status(payment_id, &normalized)
@@ -156,7 +162,9 @@ impl WalletService {
         bank_account: &str,
     ) -> Result<WalletWithdrawal, ServiceError> {
         if bank_account.trim().is_empty() {
-            return Err(ServiceError::InvalidPaymentStatus("missing bank account".to_string()));
+            return Err(ServiceError::InvalidPaymentStatus(
+                "missing bank account".to_string(),
+            ));
         }
         self.withdraw(user_id, amount).await?;
         Ok(self
@@ -227,7 +235,8 @@ impl WalletService {
             return Err(ServiceError::ForbiddenAccess);
         }
 
-        self.mutate_wallet(user_id, |w| w.release(tx.amount)).await?;
+        self.mutate_wallet(user_id, |w| w.release(tx.amount))
+            .await?;
         Ok(())
     }
 

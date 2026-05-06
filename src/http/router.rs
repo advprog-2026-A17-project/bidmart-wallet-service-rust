@@ -28,7 +28,10 @@ pub fn create_router(service: WalletService) -> Router {
         .route("/:userId/withdraw", post(withdraw))
         .route("/:userId/withdrawals", post(create_withdrawal))
         .route("/:userId/trybid", post(try_bid))
-        .route("/midtrans/payments/:paymentId/simulate", post(simulate_payment))
+        .route(
+            "/midtrans/payments/:paymentId/simulate",
+            post(simulate_payment),
+        )
         .route(
             "/midtrans/withdrawals/:withdrawalId/simulate",
             post(simulate_withdrawal),
@@ -40,10 +43,7 @@ pub fn create_router(service: WalletService) -> Router {
 
 // ── Handlers ────────────────────────────────────────────────────
 
-async fn get_wallet(
-    State(svc): State<AppState>,
-    Path(user_id): Path<String>,
-) -> impl IntoResponse {
+async fn get_wallet(State(svc): State<AppState>, Path(user_id): Path<String>) -> impl IntoResponse {
     match svc.find_by_user_id(&user_id).await {
         Ok(w) => Ok(Json(WalletResponse::from(&w))),
         Err(e) => Err(map_error(e)),
@@ -66,7 +66,10 @@ async fn get_wallet_detail(
 
     Ok(Json(WalletDetailResponse {
         wallet: WalletResponse::from(&wallet),
-        history: history.iter().map(WalletTransactionResponse::from).collect(),
+        history: history
+            .iter()
+            .map(WalletTransactionResponse::from)
+            .collect(),
     }))
 }
 
@@ -100,7 +103,10 @@ async fn create_top_up_intent(
         .create_top_up_intent(&user_id, Money::from_cents(req.amount_cents))
         .await
     {
-        Ok(payment) => Ok((StatusCode::CREATED, Json(PaymentIntentResponse::from(&payment)))),
+        Ok(payment) => Ok((
+            StatusCode::CREATED,
+            Json(PaymentIntentResponse::from(&payment)),
+        )),
         Err(e) => Err(map_error(e)),
     }
 }
@@ -123,14 +129,17 @@ async fn hold_funds(
 ) -> impl IntoResponse {
     require_internal_token(&headers)?;
     // Kita akan memanggil metode hold_funds di Service yang meneruskan semua data
-    match svc.hold_funds(
-        &req.user_id,
-        &req.auction_id,
-        &req.bid_id,
-        Money::from_cents(req.amount),
-        &req.hold_id,
-        &req.expires_at,
-    ).await {
+    match svc
+        .hold_funds(
+            &req.user_id,
+            &req.auction_id,
+            &req.bid_id,
+            Money::from_cents(req.amount),
+            &req.hold_id,
+            &req.expires_at,
+        )
+        .await
+    {
         Ok(hold) => Ok(Json(HoldResponse::from(&hold))),
         Err(e) => Err(map_error(e)),
     }
@@ -195,7 +204,10 @@ async fn create_withdrawal(
         )
         .await
     {
-        Ok(withdrawal) => Ok((StatusCode::CREATED, Json(WithdrawalResponse::from(&withdrawal)))),
+        Ok(withdrawal) => Ok((
+            StatusCode::CREATED,
+            Json(WithdrawalResponse::from(&withdrawal)),
+        )),
         Err(e) => Err(map_error(e)),
     }
 }
@@ -240,11 +252,9 @@ fn require_internal_token(
 
 fn map_error(e: ServiceError) -> (StatusCode, Json<StructuredErrorResponse>) {
     let (status, code, message) = match &e {
-        ServiceError::WalletNotFound(_) => (
-            StatusCode::NOT_FOUND, 
-            "WALLET_NOT_FOUND", 
-            e.to_string()
-        ),
+        ServiceError::WalletNotFound(_) => {
+            (StatusCode::NOT_FOUND, "WALLET_NOT_FOUND", e.to_string())
+        }
         ServiceError::Domain(wallet_err) => {
             let code = match wallet_err {
                 WalletError::InsufficientActiveBalance => "INSUFFICIENT_ACTIVE_BALANCE",
@@ -252,21 +262,17 @@ fn map_error(e: ServiceError) -> (StatusCode, Json<StructuredErrorResponse>) {
                 WalletError::InvalidAmount => "INVALID_AMOUNT",
             };
             (StatusCode::BAD_REQUEST, code, e.to_string())
-        },
+        }
         ServiceError::TransactionNotFound(_) => (
-            StatusCode::NOT_FOUND, 
-            "TRANSACTION_NOT_FOUND", 
-            e.to_string()
+            StatusCode::NOT_FOUND,
+            "TRANSACTION_NOT_FOUND",
+            e.to_string(),
         ),
-        ServiceError::ForbiddenAccess => (
-            StatusCode::FORBIDDEN, 
-            "FORBIDDEN_ACCESS", 
-            e.to_string()
-        ),
+        ServiceError::ForbiddenAccess => (StatusCode::FORBIDDEN, "FORBIDDEN_ACCESS", e.to_string()),
         ServiceError::Persistence(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR, 
-            "INTERNAL_ERROR", 
-            "internal server error".to_string()
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL_ERROR",
+            "internal server error".to_string(),
         ),
         ServiceError::HoldFailed(msg) => {
             let code = if msg.contains("Insufficient active balance") {
@@ -275,7 +281,7 @@ fn map_error(e: ServiceError) -> (StatusCode, Json<StructuredErrorResponse>) {
                 "HOLD_OPERATION_FAILED"
             };
             (StatusCode::BAD_REQUEST, code, msg.clone())
-        },
+        }
         ServiceError::InvalidPaymentStatus(_) => (
             StatusCode::BAD_REQUEST,
             "INVALID_PAYMENT_STATUS",
@@ -283,8 +289,11 @@ fn map_error(e: ServiceError) -> (StatusCode, Json<StructuredErrorResponse>) {
         ),
     };
 
-    (status, Json(StructuredErrorResponse { 
-        error_code: code.to_string(), 
-        message 
-    }))
+    (
+        status,
+        Json(StructuredErrorResponse {
+            error_code: code.to_string(),
+            message,
+        }),
+    )
 }

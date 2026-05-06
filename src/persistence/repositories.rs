@@ -39,6 +39,7 @@ fn transaction_from_row(row: TransactionRow) -> WalletTransaction {
         user_id: row.user_id,
         transaction_type: TransactionType::from_str(&row.transaction_type),
         amount: Money::from_cents(row.amount_cents as u64),
+        created_at: Some(row.created_at),
         correlation_id: row.correlation_id,
         source_service: row.source_service,
     }
@@ -336,22 +337,22 @@ impl WalletRepository {
 
     pub async fn insert_payment_intent(
         &self,
+        payment_id: &str,
         user_id: &str,
         amount: Money,
+        redirect_url: &str,
     ) -> Result<PaymentIntent, sqlx::Error> {
-        let payment_id = uuid::Uuid::new_v4().to_string();
-        let redirect_url = format!("https://app.sandbox.midtrans.com/snap/v2/vtweb/{payment_id}");
         sqlx::query(
             "INSERT INTO wallet_payment_intents (id, user_id, amount_cents, status, redirect_url) VALUES ($1, $2, $3, 'PENDING', $4)",
         )
-        .bind(&payment_id)
+        .bind(payment_id)
         .bind(user_id)
         .bind(amount.cents() as i64)
-        .bind(&redirect_url)
+        .bind(redirect_url)
         .execute(&self.pool)
         .await?;
 
-        self.find_payment_intent(&payment_id)
+        self.find_payment_intent(payment_id)
             .await?
             .ok_or(sqlx::Error::RowNotFound)
     }

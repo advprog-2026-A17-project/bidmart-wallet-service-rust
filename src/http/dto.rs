@@ -58,6 +58,17 @@ pub struct MidtransSimulationRequest {
     pub status: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MidtransPaymentReturnRequest {
+    #[serde(alias = "order_id")]
+    pub order_id: String,
+    #[serde(alias = "transaction_status")]
+    pub transaction_status: String,
+    #[serde(alias = "status_code")]
+    pub status_code: Option<String>,
+}
+
 // ── Response DTOs ───────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
@@ -77,6 +88,7 @@ pub struct WalletTransactionResponse {
     #[serde(rename = "type")]
     pub transaction_type: String,
     pub amount: u64,
+    pub timestamp: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -149,6 +161,7 @@ impl From<&WalletTransaction> for WalletTransactionResponse {
             user_id: tx.user_id.clone(),
             transaction_type: tx.transaction_type.as_str().to_string(),
             amount: tx.amount.cents(),
+            timestamp: tx.created_at.clone().unwrap_or_default(),
         }
     }
 }

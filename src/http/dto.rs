@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::wallet::{Money, Wallet, WalletTransaction};
+use crate::wallet::{PaymentIntent, Wallet, WalletTransaction, WalletWithdrawal};
 
 // ── Request DTOs ────────────────────────────────────────────────
 
@@ -40,6 +40,35 @@ pub struct AmountQuery {
     pub amount: u64,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PaymentIntentRequest {
+    pub amount_cents: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WithdrawalRequest {
+    pub amount_cents: u64,
+    pub bank_account: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MidtransSimulationRequest {
+    pub status: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MidtransPaymentReturnRequest {
+    #[serde(alias = "order_id")]
+    pub order_id: String,
+    #[serde(alias = "transaction_status")]
+    pub transaction_status: String,
+    #[serde(alias = "status_code")]
+    pub status_code: Option<String>,
+}
+
 // ── Response DTOs ───────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
@@ -59,6 +88,7 @@ pub struct WalletTransactionResponse {
     #[serde(rename = "type")]
     pub transaction_type: String,
     pub amount: u64,
+    pub timestamp: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -94,6 +124,23 @@ pub struct StructuredErrorResponse {
     pub message: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PaymentIntentResponse {
+    pub payment_id: String,
+    pub amount_cents: u64,
+    pub status: String,
+    pub redirect_url: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WithdrawalResponse {
+    pub withdrawal_id: String,
+    pub amount_cents: u64,
+    pub status: String,
+}
+
 // ── Conversions ─────────────────────────────────────────────────
 
 impl From<&Wallet> for WalletResponse {
@@ -114,6 +161,7 @@ impl From<&WalletTransaction> for WalletTransactionResponse {
             user_id: tx.user_id.clone(),
             transaction_type: tx.transaction_type.as_str().to_string(),
             amount: tx.amount.cents(),
+            timestamp: tx.created_at.clone().unwrap_or_default(),
         }
     }
 }
@@ -130,6 +178,27 @@ impl From<&crate::wallet::Hold> for HoldResponse {
             expires_at: h.expires_at.clone(),
             created_at: h.created_at.clone(),
             updated_at: h.updated_at.clone(),
+        }
+    }
+}
+
+impl From<&PaymentIntent> for PaymentIntentResponse {
+    fn from(payment: &PaymentIntent) -> Self {
+        Self {
+            payment_id: payment.id.clone(),
+            amount_cents: payment.amount_cents as u64,
+            status: payment.status.clone(),
+            redirect_url: payment.redirect_url.clone(),
+        }
+    }
+}
+
+impl From<&WalletWithdrawal> for WithdrawalResponse {
+    fn from(withdrawal: &WalletWithdrawal) -> Self {
+        Self {
+            withdrawal_id: withdrawal.id.clone(),
+            amount_cents: withdrawal.amount_cents as u64,
+            status: withdrawal.status.clone(),
         }
     }
 }

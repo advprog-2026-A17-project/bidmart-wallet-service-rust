@@ -6,9 +6,7 @@ use bidmart_wallet_service_rust::server;
 // ── Setup ────────────────────────────────────────────────────────
 
 async fn setup_service() -> WalletService {
-    let pool = server::connect_pool("sqlite::memory:")
-        .await
-        .unwrap();
+    let pool = server::connect_pool("sqlite::memory:").await.unwrap();
     server::run_migrations(&pool).await.unwrap();
     WalletService::new(pool)
 }

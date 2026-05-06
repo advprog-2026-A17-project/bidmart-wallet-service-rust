@@ -69,6 +69,10 @@ pub enum TransactionType {
     Convert,
     Bid,
     CancelBid,
+    TopUpFailed,
+    TopUpExpired,
+    WithdrawFailed,
+    WithdrawExpired,
 }
 
 impl TransactionType {
@@ -81,6 +85,10 @@ impl TransactionType {
             Self::Convert => "CONVERT",
             Self::Bid => "BID",
             Self::CancelBid => "CANCEL_BID",
+            Self::TopUpFailed => "TOP_UP_FAILED",
+            Self::TopUpExpired => "TOP_UP_EXPIRED",
+            Self::WithdrawFailed => "WITHDRAW_FAILED",
+            Self::WithdrawExpired => "WITHDRAW_EXPIRED",
         }
     }
 
@@ -96,6 +104,10 @@ impl TransactionType {
             "CONVERT" => Self::Convert,
             "BID" => Self::Bid,
             "CANCEL_BID" => Self::CancelBid,
+            "TOP_UP_FAILED" => Self::TopUpFailed,
+            "TOP_UP_EXPIRED" => Self::TopUpExpired,
+            "WITHDRAW_FAILED" => Self::WithdrawFailed,
+            "WITHDRAW_EXPIRED" => Self::WithdrawExpired,
             other => panic!("unknown transaction type: {other}"),
         }
     }
@@ -128,6 +140,7 @@ pub struct WalletTransaction {
     pub user_id: String,
     pub transaction_type: TransactionType,
     pub amount: Money,
+    pub created_at: Option<String>,
     pub correlation_id: Option<String>,
     pub source_service: Option<String>,
 }
@@ -139,6 +152,7 @@ impl WalletTransaction {
             user_id: user_id.to_string(),
             transaction_type,
             amount,
+            created_at: None,
             correlation_id: None,
             source_service: None,
         }

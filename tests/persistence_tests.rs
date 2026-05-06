@@ -1,29 +1,14 @@
 use bidmart_wallet_service_rust::persistence::repositories::{
-    WalletRepository, TransactionRepository,
+    TransactionRepository, WalletRepository,
 };
+use bidmart_wallet_service_rust::server;
 use bidmart_wallet_service_rust::wallet::{Money, TransactionType, Wallet, WalletTransaction};
 
-use sqlx::SqlitePool;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-use std::str::FromStr;
+use sqlx::AnyPool;
 
-async fn setup_pool() -> SqlitePool {
-    let options = SqliteConnectOptions::from_str("sqlite::memory:")
-        .unwrap()
-        .create_if_missing(true);
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(options)
-        .await
-        .unwrap();
-
-    let sql = include_str!("../migrations/20260429000000_init.sql");
-    for statement in sql.split(';') {
-        let trimmed = statement.trim();
-        if !trimmed.is_empty() {
-            sqlx::query(trimmed).execute(&pool).await.unwrap();
-        }
-    }
+async fn setup_pool() -> AnyPool {
+    let pool = server::connect_pool("sqlite::memory:").await.unwrap();
+    server::run_migrations(&pool).await.unwrap();
     pool
 }
 

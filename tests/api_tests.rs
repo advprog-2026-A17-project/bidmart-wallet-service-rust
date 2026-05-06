@@ -6,9 +6,7 @@ use tower::ServiceExt;
 use bidmart_wallet_service_rust::server;
 
 async fn setup_app() -> axum::Router {
-    let pool = server::connect_pool("sqlite::memory:")
-        .await
-        .unwrap();
+    let pool = server::connect_pool("sqlite::memory:").await.unwrap();
     server::run_migrations(&pool).await.unwrap();
     server::build_router(pool)
 }
@@ -169,7 +167,9 @@ async fn midtrans_paid_callback_credits_wallet_once() {
     for _ in 0..2 {
         let callback = Request::builder()
             .method("POST")
-            .uri(format!("/api/v1/wallet/midtrans/payments/{payment_id}/simulate"))
+            .uri(format!(
+                "/api/v1/wallet/midtrans/payments/{payment_id}/simulate"
+            ))
             .header("content-type", "application/json")
             .body(Body::from(r#"{"status":"PAID"}"#))
             .unwrap();
@@ -241,7 +241,10 @@ async fn hold_funds_returns_updated_balances() {
     assert_eq!(json["amount"], 4000);
 
     // 3. Verifikasi Saldo Wallet
-    let get_req = Request::builder().uri("/api/v1/wallet/user-1").body(Body::empty()).unwrap();
+    let get_req = Request::builder()
+        .uri("/api/v1/wallet/user-1")
+        .body(Body::empty())
+        .unwrap();
     let get_resp = app.oneshot(get_req).await.unwrap();
     let get_json = body_to_json(get_resp.into_body()).await;
     assert_eq!(get_json["activeBalance"], 6000);
@@ -295,7 +298,10 @@ async fn release_funds_returns_updated_balances() {
     assert_eq!(json["status"], "RELEASED");
 
     // 3. Verifikasi Saldo Kembali Penuh
-    let get_req = Request::builder().uri("/api/v1/wallet/user-1").body(Body::empty()).unwrap();
+    let get_req = Request::builder()
+        .uri("/api/v1/wallet/user-1")
+        .body(Body::empty())
+        .unwrap();
     let get_resp = app.oneshot(get_req).await.unwrap();
     let get_json = body_to_json(get_resp.into_body()).await;
     assert_eq!(get_json["activeBalance"], 10000);
@@ -349,7 +355,10 @@ async fn convert_funds_returns_updated_balances() {
     assert_eq!(json["status"], "CONVERTED");
 
     // 3. Verifikasi Saldo Tertahan Hilang
-    let get_req = Request::builder().uri("/api/v1/wallet/user-1").body(Body::empty()).unwrap();
+    let get_req = Request::builder()
+        .uri("/api/v1/wallet/user-1")
+        .body(Body::empty())
+        .unwrap();
     let get_resp = app.oneshot(get_req).await.unwrap();
     let get_json = body_to_json(get_resp.into_body()).await;
     assert_eq!(get_json["activeBalance"], 5000);
@@ -414,7 +423,9 @@ async fn midtrans_failed_withdrawal_reverses_reserved_balance() {
         .method("POST")
         .uri("/api/v1/wallet/user-1/withdrawals")
         .header("content-type", "application/json")
-        .body(Body::from(r#"{"amountCents":3000,"bankAccount":"1234567890"}"#))
+        .body(Body::from(
+            r#"{"amountCents":3000,"bankAccount":"1234567890"}"#,
+        ))
         .unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
@@ -434,7 +445,9 @@ async fn midtrans_failed_withdrawal_reverses_reserved_balance() {
 
     let simulate = Request::builder()
         .method("POST")
-        .uri(format!("/api/v1/wallet/midtrans/withdrawals/{withdrawal_id}/simulate"))
+        .uri(format!(
+            "/api/v1/wallet/midtrans/withdrawals/{withdrawal_id}/simulate"
+        ))
         .header("content-type", "application/json")
         .body(Body::from(r#"{"status":"FAILED"}"#))
         .unwrap();
@@ -543,7 +556,7 @@ async fn hold_insufficient_balance_returns_400() {
         .body(Body::from(r#"{"userId":"user-1","holdId":"hold-4","auctionId":"auc-4","bidId":"bid-4","amount":9999,"expiresAt":"2026-12-31T23:59:59Z"}"#))
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
-    
+
     // Status Code harus 400 Bad Request
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }

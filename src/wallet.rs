@@ -69,6 +69,10 @@ pub enum TransactionType {
     Convert,
     Bid,
     CancelBid,
+    TopUpFailed,
+    TopUpExpired,
+    WithdrawFailed,
+    WithdrawExpired,
 }
 
 impl TransactionType {
@@ -81,6 +85,10 @@ impl TransactionType {
             Self::Convert => "CONVERT",
             Self::Bid => "BID",
             Self::CancelBid => "CANCEL_BID",
+            Self::TopUpFailed => "TOP_UP_FAILED",
+            Self::TopUpExpired => "TOP_UP_EXPIRED",
+            Self::WithdrawFailed => "WITHDRAW_FAILED",
+            Self::WithdrawExpired => "WITHDRAW_EXPIRED",
         }
     }
 
@@ -96,6 +104,10 @@ impl TransactionType {
             "CONVERT" => Self::Convert,
             "BID" => Self::Bid,
             "CANCEL_BID" => Self::CancelBid,
+            "TOP_UP_FAILED" => Self::TopUpFailed,
+            "TOP_UP_EXPIRED" => Self::TopUpExpired,
+            "WITHDRAW_FAILED" => Self::WithdrawFailed,
+            "WITHDRAW_EXPIRED" => Self::WithdrawExpired,
             other => panic!("unknown transaction type: {other}"),
         }
     }
@@ -128,6 +140,7 @@ pub struct WalletTransaction {
     pub user_id: String,
     pub transaction_type: TransactionType,
     pub amount: Money,
+    pub created_at: Option<String>,
     pub correlation_id: Option<String>,
     pub source_service: Option<String>,
 }
@@ -139,6 +152,7 @@ impl WalletTransaction {
             user_id: user_id.to_string(),
             transaction_type,
             amount,
+            created_at: None,
             correlation_id: None,
             source_service: None,
         }
@@ -286,7 +300,6 @@ impl Wallet {
     }
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum HoldStatus {
     Active,
@@ -327,6 +340,28 @@ pub struct Hold {
     pub amount: i64,
     pub status: HoldStatus,
     pub expires_at: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaymentIntent {
+    pub id: String,
+    pub user_id: String,
+    pub amount_cents: i64,
+    pub status: String,
+    pub redirect_url: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WalletWithdrawal {
+    pub id: String,
+    pub user_id: String,
+    pub amount_cents: i64,
+    pub bank_account: String,
+    pub status: String,
     pub created_at: String,
     pub updated_at: String,
 }

@@ -1,4 +1,4 @@
-use sqlx::FromRow;
+use sqlx::{FromRow, Row, any::AnyRow};
 
 /// Database row for the wallets table.
 #[derive(Debug, FromRow)]
@@ -11,7 +11,7 @@ pub struct WalletRow {
 }
 
 /// Database row for the wallet_transactions table.
-#[derive(Debug, FromRow)]
+#[derive(Debug)]
 pub struct TransactionRow {
     pub id: String,
     pub user_id: String,
@@ -39,11 +39,59 @@ pub struct HoldRow {
     pub wallet_id: String,
     pub auction_id: String,
     pub bid_id: String,
-    pub amount: i64, 
+    pub amount: i64,
     pub status: String,
     pub expires_at: String,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Debug, FromRow)]
+pub struct PaymentIntentRow {
+    pub id: String,
+    pub user_id: String,
+    pub amount_cents: i64,
+    pub status: String,
+    pub redirect_url: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, FromRow)]
+pub struct WithdrawalRow {
+    pub id: String,
+    pub user_id: String,
+    pub amount_cents: i64,
+    pub bank_account: String,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+fn optional_string(row: &AnyRow, column: &str) -> Result<Option<String>, sqlx::Error> {
+    match row.try_get(column) {
+        Ok(value) => Ok(Some(value)),
+        Err(sqlx::Error::ColumnDecode { source, .. })
+            if source.to_string().contains("SQL type `NULL`") =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+impl<'r> FromRow<'r, AnyRow> for TransactionRow {
+    fn from_row(row: &'r AnyRow) -> Result<Self, sqlx::Error> {
+        Ok(Self {
+            id: row.try_get("id")?,
+            user_id: row.try_get("user_id")?,
+            transaction_type: row.try_get("transaction_type")?,
+            amount_cents: row.try_get("amount_cents")?,
+            created_at: row.try_get("created_at")?,
+            correlation_id: optional_string(row, "correlation_id")?,
+            source_service: optional_string(row, "source_service")?,
+        })
+    }
 }
 
 impl TryFrom<HoldRow> for crate::wallet::Hold {
@@ -62,5 +110,33 @@ impl TryFrom<HoldRow> for crate::wallet::Hold {
             created_at: row.created_at,
             updated_at: row.updated_at,
         })
+    }
+}
+
+impl From<PaymentIntentRow> for crate::wallet::PaymentIntent {
+    fn from(row: PaymentIntentRow) -> Self {
+        Self {
+            id: row.id,
+            user_id: row.user_id,
+            amount_cents: row.amount_cents,
+            status: row.status,
+            redirect_url: row.redirect_url,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        }
+    }
+}
+
+impl From<WithdrawalRow> for crate::wallet::WalletWithdrawal {
+    fn from(row: WithdrawalRow) -> Self {
+        Self {
+            id: row.id,
+            user_id: row.user_id,
+            amount_cents: row.amount_cents,
+            bank_account: row.bank_account,
+            status: row.status,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        }
     }
 }

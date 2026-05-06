@@ -32,6 +32,7 @@ pub fn create_router(service: WalletService) -> Router {
             "/midtrans/payments/:paymentId/simulate",
             post(simulate_payment),
         )
+        .route("/midtrans/payments/return", post(record_payment_return))
         .route(
             "/midtrans/withdrawals/:withdrawalId/simulate",
             post(simulate_withdrawal),
@@ -117,6 +118,20 @@ async fn simulate_payment(
     Json(req): Json<MidtransSimulationRequest>,
 ) -> impl IntoResponse {
     match svc.simulate_payment_status(&payment_id, &req.status).await {
+        Ok(payment) => Ok(Json(PaymentIntentResponse::from(&payment))),
+        Err(e) => Err(map_error(e)),
+    }
+}
+
+async fn record_payment_return(
+    State(svc): State<AppState>,
+    Json(req): Json<MidtransPaymentReturnRequest>,
+) -> impl IntoResponse {
+    let _ = req.status_code.as_deref();
+    match svc
+        .apply_midtrans_payment_result(&req.order_id, &req.transaction_status)
+        .await
+    {
         Ok(payment) => Ok(Json(PaymentIntentResponse::from(&payment))),
         Err(e) => Err(map_error(e)),
     }
@@ -287,6 +302,7 @@ fn map_error(e: ServiceError) -> (StatusCode, Json<StructuredErrorResponse>) {
             "INVALID_PAYMENT_STATUS",
             e.to_string(),
         ),
+        ServiceError::Midtrans(_) => (StatusCode::BAD_GATEWAY, "MIDTRANS_ERROR", e.to_string()),
     };
 
     (

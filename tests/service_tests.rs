@@ -1,28 +1,10 @@
+use bidmart_wallet_service_rust::server;
 use bidmart_wallet_service_rust::service::wallet_service::WalletService;
 use bidmart_wallet_service_rust::wallet::Money;
 
-use sqlx::SqlitePool;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-use std::str::FromStr;
-
 async fn setup_service() -> WalletService {
-    let options = SqliteConnectOptions::from_str("sqlite::memory:")
-        .unwrap()
-        .create_if_missing(true);
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(options)
-        .await
-        .unwrap();
-
-    let sql = include_str!("../migrations/20260429000000_init.sql");
-    for statement in sql.split(';') {
-        let trimmed = statement.trim();
-        if !trimmed.is_empty() {
-            sqlx::query(trimmed).execute(&pool).await.unwrap();
-        }
-    }
-
+    let pool = server::connect_pool("sqlite::memory:").await.unwrap();
+    server::run_migrations(&pool).await.unwrap();
     WalletService::new(pool)
 }
 
@@ -87,9 +69,14 @@ async fn top_up_zero_fails() {
 async fn withdraw_decreases_active_balance() {
     let svc = setup_service().await;
     svc.create_wallet("user-1").await.unwrap();
-    svc.top_up("user-1", Money::from_cents(10000)).await.unwrap();
+    svc.top_up("user-1", Money::from_cents(10000))
+        .await
+        .unwrap();
 
-    let wallet = svc.withdraw("user-1", Money::from_cents(3000)).await.unwrap();
+    let wallet = svc
+        .withdraw("user-1", Money::from_cents(3000))
+        .await
+        .unwrap();
     assert_eq!(wallet.active_balance(), Money::from_cents(7000));
 }
 
@@ -108,7 +95,9 @@ async fn withdraw_insufficient_balance_fails() {
 async fn hold_moves_active_to_held() {
     let svc = setup_service().await;
     svc.create_wallet("user-1").await.unwrap();
-    svc.top_up("user-1", Money::from_cents(10000)).await.unwrap();
+    svc.top_up("user-1", Money::from_cents(10000))
+        .await
+        .unwrap();
 
     let wallet = svc.hold("user-1", Money::from_cents(4000)).await.unwrap();
     assert_eq!(wallet.active_balance(), Money::from_cents(6000));
@@ -121,10 +110,15 @@ async fn hold_moves_active_to_held() {
 async fn release_moves_held_to_active() {
     let svc = setup_service().await;
     svc.create_wallet("user-1").await.unwrap();
-    svc.top_up("user-1", Money::from_cents(10000)).await.unwrap();
+    svc.top_up("user-1", Money::from_cents(10000))
+        .await
+        .unwrap();
     svc.hold("user-1", Money::from_cents(5000)).await.unwrap();
 
-    let wallet = svc.release("user-1", Money::from_cents(3000)).await.unwrap();
+    let wallet = svc
+        .release("user-1", Money::from_cents(3000))
+        .await
+        .unwrap();
     assert_eq!(wallet.active_balance(), Money::from_cents(8000));
     assert_eq!(wallet.held_balance(), Money::from_cents(2000));
 }
@@ -135,10 +129,15 @@ async fn release_moves_held_to_active() {
 async fn convert_removes_held_balance() {
     let svc = setup_service().await;
     svc.create_wallet("user-1").await.unwrap();
-    svc.top_up("user-1", Money::from_cents(10000)).await.unwrap();
+    svc.top_up("user-1", Money::from_cents(10000))
+        .await
+        .unwrap();
     svc.hold("user-1", Money::from_cents(5000)).await.unwrap();
 
-    let wallet = svc.convert("user-1", Money::from_cents(5000)).await.unwrap();
+    let wallet = svc
+        .convert("user-1", Money::from_cents(5000))
+        .await
+        .unwrap();
     assert_eq!(wallet.held_balance(), Money::zero());
     assert_eq!(wallet.active_balance(), Money::from_cents(5000));
 }
@@ -149,7 +148,9 @@ async fn convert_removes_held_balance() {
 async fn bid_moves_active_to_held() {
     let svc = setup_service().await;
     svc.create_wallet("user-1").await.unwrap();
-    svc.top_up("user-1", Money::from_cents(10000)).await.unwrap();
+    svc.top_up("user-1", Money::from_cents(10000))
+        .await
+        .unwrap();
 
     let wallet = svc.bid("user-1", Money::from_cents(4000)).await.unwrap();
     assert_eq!(wallet.active_balance(), Money::from_cents(6000));
@@ -162,9 +163,13 @@ async fn bid_moves_active_to_held() {
 async fn transaction_history_records_all_operations() {
     let svc = setup_service().await;
     svc.create_wallet("user-1").await.unwrap();
-    svc.top_up("user-1", Money::from_cents(10000)).await.unwrap();
+    svc.top_up("user-1", Money::from_cents(10000))
+        .await
+        .unwrap();
     svc.hold("user-1", Money::from_cents(3000)).await.unwrap();
-    svc.release("user-1", Money::from_cents(1000)).await.unwrap();
+    svc.release("user-1", Money::from_cents(1000))
+        .await
+        .unwrap();
 
     let history = svc.get_transaction_history("user-1").await.unwrap();
     assert_eq!(history.len(), 3);
@@ -176,14 +181,19 @@ async fn transaction_history_records_all_operations() {
 async fn cancel_bid_releases_held_funds() {
     let svc = setup_service().await;
     svc.create_wallet("user-1").await.unwrap();
-    svc.top_up("user-1", Money::from_cents(10000)).await.unwrap();
+    svc.top_up("user-1", Money::from_cents(10000))
+        .await
+        .unwrap();
 
     let wallet_after_bid = svc.bid("user-1", Money::from_cents(4000)).await.unwrap();
     assert_eq!(wallet_after_bid.held_balance(), Money::from_cents(4000));
 
     // Get the bid transaction from history to find its ID
     let history = svc.get_transaction_history("user-1").await.unwrap();
-    let bid_tx = history.iter().find(|tx| tx.transaction_type == bidmart_wallet_service_rust::wallet::TransactionType::Bid).unwrap();
+    let bid_tx = history
+        .iter()
+        .find(|tx| tx.transaction_type == bidmart_wallet_service_rust::wallet::TransactionType::Bid)
+        .unwrap();
 
     svc.cancel_bid("user-1", &bid_tx.id).await.unwrap();
 
@@ -197,11 +207,16 @@ async fn cancel_bid_wrong_user_fails() {
     let svc = setup_service().await;
     svc.create_wallet("user-1").await.unwrap();
     svc.create_wallet("user-2").await.unwrap();
-    svc.top_up("user-1", Money::from_cents(10000)).await.unwrap();
+    svc.top_up("user-1", Money::from_cents(10000))
+        .await
+        .unwrap();
     svc.bid("user-1", Money::from_cents(4000)).await.unwrap();
 
     let history = svc.get_transaction_history("user-1").await.unwrap();
-    let bid_tx = history.iter().find(|tx| tx.transaction_type == bidmart_wallet_service_rust::wallet::TransactionType::Bid).unwrap();
+    let bid_tx = history
+        .iter()
+        .find(|tx| tx.transaction_type == bidmart_wallet_service_rust::wallet::TransactionType::Bid)
+        .unwrap();
 
     let result = svc.cancel_bid("user-2", &bid_tx.id).await;
     assert!(result.is_err());

@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
     user_id          TEXT NOT NULL,
     transaction_type TEXT NOT NULL,
     amount_cents     INTEGER NOT NULL,
-    created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     correlation_id   TEXT,
     source_service   TEXT
 );
@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS wallet_provisioning_events (
     email        TEXT NOT NULL,
     occurred_at  TEXT NOT NULL,
     source       TEXT NOT NULL,
-    processed_at TEXT NOT NULL DEFAULT (datetime('now'))
+    processed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS holds (
@@ -36,8 +36,8 @@ CREATE TABLE IF NOT EXISTS holds (
     amount     INTEGER NOT NULL,
     status     TEXT NOT NULL,
     expires_at TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_holds_auction_bid ON holds(auction_id, bid_id);
@@ -49,8 +49,8 @@ CREATE TABLE IF NOT EXISTS wallet_payment_intents (
     amount_cents INTEGER NOT NULL,
     status       TEXT NOT NULL,
     redirect_url TEXT NOT NULL,
-    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_wallet_payment_intents_user_id
@@ -62,8 +62,8 @@ CREATE TABLE IF NOT EXISTS wallet_withdrawals (
     amount_cents INTEGER NOT NULL,
     bank_account TEXT NOT NULL,
     status       TEXT NOT NULL,
-    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_wallet_withdrawals_user_id

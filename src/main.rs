@@ -1,9 +1,10 @@
 use std::env;
 use std::sync::Arc;
 
-use bidmart_wallet_service_rust::service::reconciliation::run_reconciliation_worker; 
 use bidmart_wallet_service_rust::persistence::repositories::WalletRepository;
 use bidmart_wallet_service_rust::server;
+use bidmart_wallet_service_rust::server::default_database_url;
+use bidmart_wallet_service_rust::service::reconciliation::run_reconciliation_worker;
 use dotenvy::from_path;
 
 #[tokio::main]
@@ -11,7 +12,7 @@ async fn main() {
     let _ = from_path(".env");
     let _ = dotenvy::from_path_override("../bidmart-infrastructure/.env");
 
-    let database_url = env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:wallet.db".to_string());
+    let database_url = env::var("DATABASE_URL").unwrap_or_else(|_| default_database_url());
     let port = env::var("PORT").unwrap_or_else(|_| "8083".to_string());
     let addr = format!("0.0.0.0:{port}");
 

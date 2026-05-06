@@ -200,6 +200,10 @@ fn transaction_type_display() {
     assert_eq!(TransactionType::Convert.as_str(), "CONVERT");
     assert_eq!(TransactionType::Bid.as_str(), "BID");
     assert_eq!(TransactionType::CancelBid.as_str(), "CANCEL_BID");
+    assert_eq!(TransactionType::TopUpFailed.as_str(), "TOP_UP_FAILED");
+    assert_eq!(TransactionType::TopUpExpired.as_str(), "TOP_UP_EXPIRED");
+    assert_eq!(TransactionType::WithdrawFailed.as_str(), "WITHDRAW_FAILED");
+    assert_eq!(TransactionType::WithdrawExpired.as_str(), "WITHDRAW_EXPIRED");
 }
 
 // ── WalletTransaction creation ───────────────────────────────────

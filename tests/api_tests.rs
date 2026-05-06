@@ -137,7 +137,7 @@ async fn midtrans_top_up_intent_returns_pending_payment_without_crediting_wallet
         .uri("/api/v1/wallet/user-1")
         .body(Body::empty())
         .unwrap();
-    let get_resp = app.oneshot(get_req).await.unwrap();
+    let get_resp = app.clone().oneshot(get_req).await.unwrap();
     let wallet = body_to_json(get_resp.into_body()).await;
     assert_eq!(wallet["activeBalance"], 0);
 }
@@ -181,9 +181,107 @@ async fn midtrans_paid_callback_credits_wallet_once() {
         .uri("/api/v1/wallet/user-1")
         .body(Body::empty())
         .unwrap();
-    let get_resp = app.oneshot(get_req).await.unwrap();
+    let get_resp = app.clone().oneshot(get_req).await.unwrap();
     let wallet = body_to_json(get_resp.into_body()).await;
     assert_eq!(wallet["activeBalance"], 7500);
+}
+
+#[tokio::test]
+async fn midtrans_failed_and_expired_payments_are_recorded_in_history() {
+    let app = setup_app().await;
+
+    let create = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/add")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"userId":"user-1"}"#))
+        .unwrap();
+    let _ = app.clone().oneshot(create).await.unwrap();
+
+    for status in ["FAILED", "EXPIRED"] {
+        let intent = Request::builder()
+            .method("POST")
+            .uri("/api/v1/wallet/user-1/top-up/intent")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"amountCents":4500}"#))
+            .unwrap();
+        let intent_resp = app.clone().oneshot(intent).await.unwrap();
+        let intent_json = body_to_json(intent_resp.into_body()).await;
+        let payment_id = intent_json["paymentId"].as_str().unwrap();
+
+        let callback = Request::builder()
+            .method("POST")
+            .uri(format!(
+                "/api/v1/wallet/midtrans/payments/{payment_id}/simulate"
+            ))
+            .header("content-type", "application/json")
+            .body(Body::from(format!(r#"{{"status":"{status}"}}"#)))
+            .unwrap();
+        let resp = app.clone().oneshot(callback).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    let detail = Request::builder()
+        .uri("/api/v1/wallet/user-1/detail")
+        .body(Body::empty())
+        .unwrap();
+    let detail_resp = app.clone().oneshot(detail).await.unwrap();
+    assert_eq!(detail_resp.status(), StatusCode::OK);
+    let detail_json = body_to_json(detail_resp.into_body()).await;
+
+    assert_eq!(detail_json["wallet"]["activeBalance"], 0);
+    let history = detail_json["history"].as_array().unwrap();
+    let types: Vec<&str> = history
+        .iter()
+        .map(|entry| entry["type"].as_str().unwrap())
+        .collect();
+    assert!(types.contains(&"TOP_UP_FAILED"));
+    assert!(types.contains(&"TOP_UP_EXPIRED"));
+    assert!(history.iter().all(|entry| entry["timestamp"].is_string()));
+}
+
+#[tokio::test]
+async fn midtrans_return_callback_maps_web_sandbox_statuses() {
+    let app = setup_app().await;
+
+    let create = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/add")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"userId":"user-1"}"#))
+        .unwrap();
+    let _ = app.clone().oneshot(create).await.unwrap();
+
+    let intent = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/user-1/top-up/intent")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"amountCents":9900}"#))
+        .unwrap();
+    let intent_resp = app.clone().oneshot(intent).await.unwrap();
+    let intent_json = body_to_json(intent_resp.into_body()).await;
+    let payment_id = intent_json["paymentId"].as_str().unwrap();
+
+    let callback = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/midtrans/payments/return")
+        .header("content-type", "application/json")
+        .body(Body::from(format!(
+            r#"{{"orderId":"{payment_id}","transactionStatus":"settlement","statusCode":"200"}}"#
+        )))
+        .unwrap();
+    let callback_resp = app.clone().oneshot(callback).await.unwrap();
+    assert_eq!(callback_resp.status(), StatusCode::OK);
+    let callback_json = body_to_json(callback_resp.into_body()).await;
+    assert_eq!(callback_json["status"], "PAID");
+
+    let get_req = Request::builder()
+        .uri("/api/v1/wallet/user-1")
+        .body(Body::empty())
+        .unwrap();
+    let get_resp = app.clone().oneshot(get_req).await.unwrap();
+    let wallet = body_to_json(get_resp.into_body()).await;
+    assert_eq!(wallet["activeBalance"], 9900);
 }
 
 // ── POST /api/v1/wallet/hold ─────────────────────────────────────
@@ -458,9 +556,22 @@ async fn midtrans_failed_withdrawal_reverses_reserved_balance() {
         .uri("/api/v1/wallet/user-1")
         .body(Body::empty())
         .unwrap();
-    let get_resp = app.oneshot(get_req).await.unwrap();
+    let get_resp = app.clone().oneshot(get_req).await.unwrap();
     let wallet = body_to_json(get_resp.into_body()).await;
     assert_eq!(wallet["activeBalance"], 10000);
+
+    let detail = Request::builder()
+        .uri("/api/v1/wallet/user-1/detail")
+        .body(Body::empty())
+        .unwrap();
+    let detail_resp = app.oneshot(detail).await.unwrap();
+    let detail_json = body_to_json(detail_resp.into_body()).await;
+    let history = detail_json["history"].as_array().unwrap();
+    let types: Vec<&str> = history
+        .iter()
+        .map(|entry| entry["type"].as_str().unwrap())
+        .collect();
+    assert!(types.contains(&"WITHDRAW_FAILED"));
 }
 
 // ── POST /api/v1/wallet/{userId}/trybid ──────────────────────────

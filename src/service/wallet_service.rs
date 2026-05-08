@@ -50,26 +50,38 @@ impl std::fmt::Display for ServiceError {
     }
 }
 
-#[derive(Debug, serde::Serialize)]
-struct MidtransSnapRequest {
-    transaction_details: MidtransTransactionDetails,
-    callbacks: MidtransCallbacks,
-}
-
-#[derive(Debug, serde::Serialize)]
-struct MidtransTransactionDetails {
-    order_id: String,
-    gross_amount: i64,
-}
-
-#[derive(Debug, serde::Serialize)]
-struct MidtransCallbacks {
-    finish: String,
+#[derive(Debug, Clone)]
+struct MidtransPaymentPage {
+    redirect_url: String,
+    va_number: Option<String>,
+    payment_channel: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
-struct MidtransSnapResponse {
-    redirect_url: String,
+struct MidtransBankTransferChargeResponse {
+    transaction_status: Option<String>,
+    va_numbers: Option<Vec<MidtransVaNumber>>,
+    permata_va_number: Option<String>,
+    biller_code: Option<String>,
+    bill_key: Option<String>,
+    actions: Option<Vec<MidtransAction>>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct MidtransVaNumber {
+    bank: String,
+    va_number: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct MidtransAction {
+    name: String,
+    url: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct MidtransTransactionStatusResponse {
+    transaction_status: String,
 }
 
 // ── WalletService ───────────────────────────────────────────────
@@ -134,16 +146,24 @@ impl WalletService {
         &self,
         user_id: &str,
         amount: Money,
+        payment_method: Option<&str>,
     ) -> Result<PaymentIntent, ServiceError> {
         if amount.is_zero() {
             return Err(ServiceError::Domain(WalletError::InvalidAmount));
         }
         self.find_by_user_id(user_id).await?;
         let payment_id = uuid::Uuid::new_v4().to_string();
-        let redirect_url = create_midtrans_snap_redirect_url(&payment_id, amount).await?;
+        let payment_page = create_midtrans_payment(&payment_id, amount, payment_method).await?;
         Ok(self
             .wallet_repo
-            .insert_payment_intent(&payment_id, user_id, amount, &redirect_url)
+            .insert_payment_intent(
+                &payment_id,
+                user_id,
+                amount,
+                &payment_page.redirect_url,
+                payment_page.va_number.as_deref(),
+                payment_page.payment_channel.as_deref(),
+            )
             .await?)
     }
 
@@ -163,6 +183,25 @@ impl WalletService {
     ) -> Result<PaymentIntent, ServiceError> {
         let normalized = map_midtrans_transaction_status(transaction_status)?;
         self.apply_payment_status(order_id, &normalized).await
+    }
+
+    pub async fn sync_midtrans_payment_status(
+        &self,
+        payment_id: &str,
+    ) -> Result<PaymentIntent, ServiceError> {
+        let payment = self
+            .wallet_repo
+            .find_payment_intent(payment_id)
+            .await?
+            .ok_or_else(|| ServiceError::TransactionNotFound(payment_id.to_string()))?;
+
+        if payment.status != "PENDING" {
+            return Ok(payment);
+        }
+
+        let transaction_status = fetch_midtrans_transaction_status(payment_id).await?;
+        let normalized = map_midtrans_transaction_status(&transaction_status)?;
+        self.apply_payment_status(payment_id, &normalized).await
     }
 
     async fn apply_payment_status(
@@ -439,35 +478,176 @@ fn map_midtrans_transaction_status(status: &str) -> Result<String, ServiceError>
     }
 }
 
-async fn create_midtrans_snap_redirect_url(
+#[derive(Debug, Clone, Copy)]
+enum MidtransPaymentMethod {
+    BcaVa,
+    BniVa,
+    BriVa,
+    PermataVa,
+    MandiriBill,
+    Qris,
+}
+
+impl MidtransPaymentMethod {
+    fn parse(value: Option<&str>) -> Result<Self, ServiceError> {
+        match value.unwrap_or("bca_va").trim().to_ascii_lowercase().as_str() {
+            "bca" | "bca_va" => Ok(Self::BcaVa),
+            "bni" | "bni_va" => Ok(Self::BniVa),
+            "bri" | "bri_va" => Ok(Self::BriVa),
+            "permata" | "permata_va" => Ok(Self::PermataVa),
+            "mandiri" | "mandiri_bill" => Ok(Self::MandiriBill),
+            "qris" => Ok(Self::Qris),
+            other => Err(ServiceError::InvalidPaymentStatus(format!(
+                "unsupported payment method: {other}"
+            ))),
+        }
+    }
+
+    fn channel(self) -> &'static str {
+        match self {
+            Self::BcaVa => "bca_va",
+            Self::BniVa => "bni_va",
+            Self::BriVa => "bri_va",
+            Self::PermataVa => "permata_va",
+            Self::MandiriBill => "mandiri_bill",
+            Self::Qris => "qris",
+        }
+    }
+
+    fn charge_request(self, payment_id: &str, amount: Money) -> serde_json::Value {
+        let transaction_details = serde_json::json!({
+            "order_id": payment_id,
+            "gross_amount": amount.cents() as i64
+        });
+
+        match self {
+            Self::BcaVa => serde_json::json!({
+                "payment_type": "bank_transfer",
+                "transaction_details": transaction_details,
+                "bank_transfer": { "bank": "bca" }
+            }),
+            Self::BniVa => serde_json::json!({
+                "payment_type": "bank_transfer",
+                "transaction_details": transaction_details,
+                "bank_transfer": { "bank": "bni" }
+            }),
+            Self::BriVa => serde_json::json!({
+                "payment_type": "bank_transfer",
+                "transaction_details": transaction_details,
+                "bank_transfer": { "bank": "bri" }
+            }),
+            Self::PermataVa => serde_json::json!({
+                "payment_type": "permata",
+                "transaction_details": transaction_details
+            }),
+            Self::MandiriBill => serde_json::json!({
+                "payment_type": "echannel",
+                "transaction_details": transaction_details,
+                "echannel": {
+                    "bill_info1": "Payment:",
+                    "bill_info2": "BidMart top up"
+                }
+            }),
+            Self::Qris => serde_json::json!({
+                "payment_type": "qris",
+                "transaction_details": transaction_details
+            }),
+        }
+    }
+
+    fn payment_page(self, charge: MidtransBankTransferChargeResponse) -> Result<MidtransPaymentPage, ServiceError> {
+        let _ = charge.transaction_status.as_deref();
+        let simulator = simulator_url_for(self);
+        let instruction = match self {
+            Self::BcaVa | Self::BniVa | Self::BriVa => charge
+                .va_numbers
+                .unwrap_or_default()
+                .into_iter()
+                .find(|va| va.bank.eq_ignore_ascii_case(bank_name_for(self)))
+                .map(|va| va.va_number),
+            Self::PermataVa => charge.permata_va_number,
+            Self::MandiriBill => match (charge.biller_code, charge.bill_key) {
+                (Some(code), Some(key)) => Some(format!("company code {code}, bill key {key}")),
+                _ => None,
+            },
+            Self::Qris => charge
+                .actions
+                .unwrap_or_default()
+                .into_iter()
+                .find(|action| action.name == "generate-qr-code")
+                .map(|action| action.url),
+        }
+        .ok_or_else(|| {
+            ServiceError::Midtrans(format!(
+                "{} payment instruction missing from charge response",
+                self.channel()
+            ))
+        })?;
+
+        Ok(MidtransPaymentPage {
+            redirect_url: simulator,
+            va_number: Some(instruction),
+            payment_channel: Some(self.channel().to_string()),
+        })
+    }
+}
+
+fn bank_name_for(method: MidtransPaymentMethod) -> &'static str {
+    match method {
+        MidtransPaymentMethod::BcaVa => "bca",
+        MidtransPaymentMethod::BniVa => "bni",
+        MidtransPaymentMethod::BriVa => "bri",
+        _ => "",
+    }
+}
+
+fn simulator_url_for(method: MidtransPaymentMethod) -> String {
+    let key = match method {
+        MidtransPaymentMethod::BcaVa => "MIDTRANS_BCA_VA_SIMULATOR_URL",
+        MidtransPaymentMethod::BniVa => "MIDTRANS_BNI_VA_SIMULATOR_URL",
+        MidtransPaymentMethod::BriVa => "MIDTRANS_BRI_VA_SIMULATOR_URL",
+        MidtransPaymentMethod::PermataVa => "MIDTRANS_PERMATA_VA_SIMULATOR_URL",
+        MidtransPaymentMethod::MandiriBill => "MIDTRANS_MANDIRI_BILL_SIMULATOR_URL",
+        MidtransPaymentMethod::Qris => "MIDTRANS_QRIS_SIMULATOR_URL",
+    };
+    std::env::var(key).unwrap_or_else(|_| match method {
+        MidtransPaymentMethod::BcaVa => "https://simulator.sandbox.midtrans.com/bca/va/index".to_string(),
+        MidtransPaymentMethod::BniVa => "https://simulator.sandbox.midtrans.com/bni/va/index".to_string(),
+        MidtransPaymentMethod::BriVa => "https://simulator.sandbox.midtrans.com/bri/va/index".to_string(),
+        MidtransPaymentMethod::PermataVa => "https://simulator.sandbox.midtrans.com/openapi/va/index".to_string(),
+        MidtransPaymentMethod::MandiriBill => "https://simulator.sandbox.midtrans.com/openapi/mandiri/index".to_string(),
+        MidtransPaymentMethod::Qris => "https://simulator.sandbox.midtrans.com/qris/index".to_string(),
+    })
+}
+
+async fn create_midtrans_payment(
     payment_id: &str,
     amount: Money,
-) -> Result<String, ServiceError> {
-    let snap_url = std::env::var("MIDTRANS_SNAP_URL")
-        .unwrap_or_else(|_| "https://app.sandbox.midtrans.com/snap/v1/transactions".to_string());
+    payment_method: Option<&str>,
+) -> Result<MidtransPaymentPage, ServiceError> {
+    let charge_url = std::env::var("MIDTRANS_CHARGE_URL")
+        .unwrap_or_else(|_| "https://api.sandbox.midtrans.com/v2/charge".to_string());
     let server_key = std::env::var("MIDTRANS_SERVER_KEY").unwrap_or_default();
-
-    if server_key.is_empty() || server_key == "SB-Mid-server-local" {
-        return Ok(format!(
-            "https://app.sandbox.midtrans.com/snap/v2/vtweb/{payment_id}"
-        ));
-    }
+    let method = MidtransPaymentMethod::parse(payment_method)?;
 
     let frontend_base_url =
         std::env::var("FRONTEND_BASE_URL").unwrap_or_else(|_| "http://localhost".to_string());
-    let finish_url = std::env::var("MIDTRANS_FINISH_URL")
-        .unwrap_or_else(|_| format!("{}/wallet", frontend_base_url.trim_end_matches('/')));
 
-    let request = MidtransSnapRequest {
-        transaction_details: MidtransTransactionDetails {
-            order_id: payment_id.to_string(),
-            gross_amount: amount.cents() as i64,
-        },
-        callbacks: MidtransCallbacks { finish: finish_url },
-    };
+    if server_key.is_empty() || server_key == "SB-Mid-server-local" {
+        let wallet_url = format!("{}/wallet", frontend_base_url.trim_end_matches('/'));
+        return Ok(MidtransPaymentPage {
+            redirect_url: format!(
+                "{wallet_url}?order_id={payment_id}&transaction_status=settlement&status_code=200"
+            ),
+            va_number: None,
+            payment_channel: Some(format!("local-{}", method.channel())),
+        });
+    }
+
+    let request = method.charge_request(payment_id, amount);
 
     let response = reqwest::Client::new()
-        .post(&snap_url)
+        .post(&charge_url)
         .basic_auth(server_key, Some(""))
         .json(&request)
         .send()
@@ -478,14 +658,47 @@ async fn create_midtrans_snap_redirect_url(
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
         return Err(ServiceError::Midtrans(format!(
-            "Snap API returned {status}: {body}"
+            "Core API charge returned {status}: {body}"
         )));
     }
 
-    let snap = response
-        .json::<MidtransSnapResponse>()
+    let charge = response
+        .json::<MidtransBankTransferChargeResponse>()
         .await
         .map_err(|error| ServiceError::Midtrans(error.to_string()))?;
 
-    Ok(snap.redirect_url)
+    method.payment_page(charge)
+}
+
+async fn fetch_midtrans_transaction_status(payment_id: &str) -> Result<String, ServiceError> {
+    let status_base_url = std::env::var("MIDTRANS_STATUS_BASE_URL")
+        .unwrap_or_else(|_| "https://api.sandbox.midtrans.com/v2".to_string());
+    let server_key = std::env::var("MIDTRANS_SERVER_KEY").unwrap_or_default();
+
+    if server_key.is_empty() || server_key == "SB-Mid-server-local" {
+        return Err(ServiceError::Midtrans(
+            "MIDTRANS_SERVER_KEY must be configured to sync Midtrans sandbox status".to_string(),
+        ));
+    }
+
+    let response = reqwest::Client::new()
+        .get(format!("{}/{}/status", status_base_url.trim_end_matches('/'), payment_id))
+        .basic_auth(server_key, Some(""))
+        .send()
+        .await
+        .map_err(|error| ServiceError::Midtrans(error.to_string()))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(ServiceError::Midtrans(format!(
+            "Transaction status API returned {status}: {body}"
+        )));
+    }
+
+    let status = response
+        .json::<MidtransTransactionStatusResponse>()
+        .await
+        .map_err(|error| ServiceError::Midtrans(error.to_string()))?;
+    Ok(status.transaction_status)
 }

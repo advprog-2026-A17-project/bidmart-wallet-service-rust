@@ -44,6 +44,7 @@ pub struct AmountQuery {
 #[serde(rename_all = "camelCase")]
 pub struct PaymentIntentRequest {
     pub amount_cents: u64,
+    pub payment_method: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -131,6 +132,8 @@ pub struct PaymentIntentResponse {
     pub amount_cents: u64,
     pub status: String,
     pub redirect_url: String,
+    pub va_number: Option<String>,
+    pub payment_channel: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -189,6 +192,8 @@ impl From<&PaymentIntent> for PaymentIntentResponse {
             amount_cents: payment.amount_cents as u64,
             status: payment.status.clone(),
             redirect_url: payment.redirect_url.clone(),
+            va_number: payment.va_number.clone(),
+            payment_channel: payment.payment_channel.clone(),
         }
     }
 }

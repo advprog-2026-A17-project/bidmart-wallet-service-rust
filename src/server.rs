@@ -36,5 +36,17 @@ pub async fn run_migrations(pool: &AnyPool) -> Result<(), sqlx::Error> {
             sqlx::query(trimmed).execute(pool).await?;
         }
     }
+    ensure_payment_intent_columns(pool).await;
     Ok(())
+}
+
+async fn ensure_payment_intent_columns(pool: &AnyPool) {
+    let statements = [
+        "ALTER TABLE wallet_payment_intents ADD COLUMN va_number TEXT",
+        "ALTER TABLE wallet_payment_intents ADD COLUMN payment_channel TEXT",
+    ];
+
+    for statement in statements {
+        let _ = sqlx::query(statement).execute(pool).await;
+    }
 }

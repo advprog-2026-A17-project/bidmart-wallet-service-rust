@@ -17,7 +17,7 @@ const PROV_COLS: &str = "event_id, user_id, email, occurred_at, source, processe
 const HOLD_COLS: &str =
     "id, wallet_id, auction_id, bid_id, amount, status, expires_at, created_at, updated_at";
 const PAYMENT_COLS: &str =
-    "id, user_id, amount_cents, status, redirect_url, created_at, updated_at";
+    "id, user_id, amount_cents, status, redirect_url, va_number, payment_channel, created_at, updated_at";
 const WITHDRAWAL_COLS: &str =
     "id, user_id, amount_cents, bank_account, status, created_at, updated_at";
 
@@ -341,14 +341,18 @@ impl WalletRepository {
         user_id: &str,
         amount: Money,
         redirect_url: &str,
+        va_number: Option<&str>,
+        payment_channel: Option<&str>,
     ) -> Result<PaymentIntent, sqlx::Error> {
         sqlx::query(
-            "INSERT INTO wallet_payment_intents (id, user_id, amount_cents, status, redirect_url) VALUES ($1, $2, $3, 'PENDING', $4)",
+            "INSERT INTO wallet_payment_intents (id, user_id, amount_cents, status, redirect_url, va_number, payment_channel) VALUES ($1, $2, $3, 'PENDING', $4, $5, $6)",
         )
         .bind(payment_id)
         .bind(user_id)
         .bind(amount.cents() as i64)
         .bind(redirect_url)
+        .bind(va_number)
+        .bind(payment_channel)
         .execute(&self.pool)
         .await?;
 

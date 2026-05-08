@@ -46,15 +46,33 @@ pub struct HoldRow {
     pub updated_at: String,
 }
 
-#[derive(Debug, FromRow)]
+#[derive(Debug)]
 pub struct PaymentIntentRow {
     pub id: String,
     pub user_id: String,
     pub amount_cents: i64,
     pub status: String,
     pub redirect_url: String,
+    pub va_number: Option<String>,
+    pub payment_channel: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+impl<'r> FromRow<'r, AnyRow> for PaymentIntentRow {
+    fn from_row(row: &'r AnyRow) -> Result<Self, sqlx::Error> {
+        Ok(Self {
+            id: row.try_get("id")?,
+            user_id: row.try_get("user_id")?,
+            amount_cents: row.try_get("amount_cents")?,
+            status: row.try_get("status")?,
+            redirect_url: row.try_get("redirect_url")?,
+            va_number: optional_string(row, "va_number")?,
+            payment_channel: optional_string(row, "payment_channel")?,
+            created_at: row.try_get("created_at")?,
+            updated_at: row.try_get("updated_at")?,
+        })
+    }
 }
 
 #[derive(Debug, FromRow)]
@@ -121,6 +139,8 @@ impl From<PaymentIntentRow> for crate::wallet::PaymentIntent {
             amount_cents: row.amount_cents,
             status: row.status,
             redirect_url: row.redirect_url,
+            va_number: row.va_number,
+            payment_channel: row.payment_channel,
             created_at: row.created_at,
             updated_at: row.updated_at,
         }

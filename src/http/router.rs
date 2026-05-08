@@ -32,6 +32,7 @@ pub fn create_router(service: WalletService) -> Router {
             "/midtrans/payments/:paymentId/simulate",
             post(simulate_payment),
         )
+        .route("/midtrans/payments/:paymentId/sync", post(sync_payment))
         .route("/midtrans/payments/return", post(record_payment_return))
         .route(
             "/midtrans/withdrawals/:withdrawalId/simulate",
@@ -101,7 +102,11 @@ async fn create_top_up_intent(
     Json(req): Json<PaymentIntentRequest>,
 ) -> impl IntoResponse {
     match svc
-        .create_top_up_intent(&user_id, Money::from_cents(req.amount_cents))
+        .create_top_up_intent(
+            &user_id,
+            Money::from_cents(req.amount_cents),
+            req.payment_method.as_deref(),
+        )
         .await
     {
         Ok(payment) => Ok((
@@ -118,6 +123,16 @@ async fn simulate_payment(
     Json(req): Json<MidtransSimulationRequest>,
 ) -> impl IntoResponse {
     match svc.simulate_payment_status(&payment_id, &req.status).await {
+        Ok(payment) => Ok(Json(PaymentIntentResponse::from(&payment))),
+        Err(e) => Err(map_error(e)),
+    }
+}
+
+async fn sync_payment(
+    State(svc): State<AppState>,
+    Path(payment_id): Path<String>,
+) -> impl IntoResponse {
+    match svc.sync_midtrans_payment_status(&payment_id).await {
         Ok(payment) => Ok(Json(PaymentIntentResponse::from(&payment))),
         Err(e) => Err(map_error(e)),
     }

@@ -49,6 +49,8 @@ CREATE TABLE IF NOT EXISTS wallet_payment_intents (
     amount_cents INTEGER NOT NULL,
     status       TEXT NOT NULL,
     redirect_url TEXT NOT NULL,
+    va_number    TEXT,
+    payment_channel TEXT,
     created_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

@@ -351,6 +351,8 @@ pub struct PaymentIntent {
     pub amount_cents: i64,
     pub status: String,
     pub redirect_url: String,
+    pub va_number: Option<String>,
+    pub payment_channel: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }

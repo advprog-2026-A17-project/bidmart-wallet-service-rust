@@ -1,4 +1,4 @@
-use sqlx::AnyPool;
+use sqlx::{Any, AnyPool, Transaction};
 
 use crate::persistence::models::{
     HoldRow, PaymentIntentRow, ProvisioningEventRow, TransactionRow, WalletRow, WithdrawalRow,
@@ -7,6 +7,8 @@ use crate::wallet::{
     Hold, HoldStatus, Money, PaymentIntent, TransactionType, Wallet, WalletTransaction,
     WalletWithdrawal,
 };
+
+use chrono::{DateTime, NaiveDateTime, Utc};
 
 // ── Column lists (DRY) ──────────────────────────────────────────
 
@@ -34,15 +36,31 @@ fn wallet_from_row(row: WalletRow) -> Wallet {
 }
 
 fn transaction_from_row(row: TransactionRow) -> WalletTransaction {
+    let ts = normalize_timestamp(row.created_at);
     WalletTransaction {
         id: row.id,
         user_id: row.user_id,
         transaction_type: TransactionType::from_str(&row.transaction_type),
         amount: Money::from_cents(row.amount_cents as u64),
-        created_at: Some(row.created_at),
+        created_at: Some(ts),
         correlation_id: row.correlation_id,
         source_service: row.source_service,
     }
+}
+
+fn normalize_timestamp(input: String) -> String {
+    // Try RFC3339 first
+    if let Ok(dt) = DateTime::parse_from_rfc3339(&input) {
+        return dt.with_timezone(&Utc).to_rfc3339();
+    }
+
+    // Fallback: common SQL datetime format `YYYY-MM-DD HH:MM:SS`
+    if let Ok(naive) = NaiveDateTime::parse_from_str(&input, "%Y-%m-%d %H:%M:%S") {
+        return DateTime::<Utc>::from_utc(naive, Utc).to_rfc3339();
+    }
+
+    // Unknown format: return original string
+    input
 }
 
 // ── WalletRepository ────────────────────────────────────────────
@@ -54,6 +72,10 @@ pub struct WalletRepository {
 impl WalletRepository {
     pub fn new(pool: AnyPool) -> Self {
         Self { pool }
+    }
+
+    pub async fn begin_tx(&self) -> Result<Transaction<'_, Any>, sqlx::Error> {
+        self.pool.begin().await
     }
 
     pub async fn insert(&self, wallet: &Wallet) -> Result<(), sqlx::Error> {
@@ -79,6 +101,20 @@ impl WalletRepository {
         Ok(row.map(wallet_from_row))
     }
 
+    pub async fn find_by_user_id_tx(
+        &self,
+        tx: &mut Transaction<'_, Any>,
+        user_id: &str,
+    ) -> Result<Option<Wallet>, sqlx::Error> {
+        let sql = format!("SELECT {WALLET_COLS} FROM wallets WHERE user_id = $1");
+        let row: Option<WalletRow> = sqlx::query_as(&sql)
+            .bind(user_id)
+            .fetch_optional(&mut **tx)
+            .await?;
+
+        Ok(row.map(wallet_from_row))
+    }
+
     pub async fn update(&self, wallet: &Wallet) -> Result<(), sqlx::Error> {
         let result = sqlx::query(
             "UPDATE wallets SET active_balance_cents = $1, held_balance_cents = $2, version = version + 1 WHERE id = $3 AND version = $4",
@@ -88,6 +124,27 @@ impl WalletRepository {
         .bind(wallet.id())
         .bind(wallet.version())
         .execute(&self.pool)
+        .await?;
+
+        if result.rows_affected() == 0 {
+            return Err(sqlx::Error::RowNotFound);
+        }
+        Ok(())
+    }
+
+    pub async fn update_tx(
+        &self,
+        tx: &mut Transaction<'_, Any>,
+        wallet: &Wallet,
+    ) -> Result<(), sqlx::Error> {
+        let result = sqlx::query(
+            "UPDATE wallets SET active_balance_cents = $1, held_balance_cents = $2, version = version + 1 WHERE id = $3 AND version = $4",
+        )
+        .bind(wallet.active_balance().cents() as i64)
+        .bind(wallet.held_balance().cents() as i64)
+        .bind(wallet.id())
+        .bind(wallet.version())
+        .execute(&mut **tx)
         .await?;
 
         if result.rows_affected() == 0 {
@@ -374,6 +431,20 @@ impl WalletRepository {
         Ok(row.map(PaymentIntent::from))
     }
 
+    pub async fn find_payment_intent_tx(
+        &self,
+        tx: &mut Transaction<'_, Any>,
+        payment_id: &str,
+    ) -> Result<Option<PaymentIntent>, sqlx::Error> {
+        let sql = format!("SELECT {PAYMENT_COLS} FROM wallet_payment_intents WHERE id = $1");
+        let row: Option<PaymentIntentRow> = sqlx::query_as(&sql)
+            .bind(payment_id)
+            .fetch_optional(&mut **tx)
+            .await?;
+
+        Ok(row.map(PaymentIntent::from))
+    }
+
     pub async fn update_payment_status(
         &self,
         payment_id: &str,
@@ -387,6 +458,25 @@ impl WalletRepository {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    pub async fn update_payment_status_if_pending_tx(
+        &self,
+        tx: &mut Transaction<'_, Any>,
+        payment_id: &str,
+        status: &str,
+    ) -> Result<bool, sqlx::Error> {
+        let updated_at = chrono::Utc::now().to_rfc3339();
+        let result = sqlx::query(
+            "UPDATE wallet_payment_intents SET status = $1, updated_at = $2 WHERE id = $3 AND status = 'PENDING'",
+        )
+        .bind(status)
+        .bind(updated_at)
+        .bind(payment_id)
+        .execute(&mut **tx)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
     }
 
     pub async fn insert_withdrawal(
@@ -462,6 +552,25 @@ impl TransactionRepository {
         .bind(&tx.correlation_id)
         .bind(&tx.source_service)
         .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn insert_tx(
+        &self,
+        db_tx: &mut Transaction<'_, Any>,
+        tx: &WalletTransaction,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO wallet_transactions (id, user_id, transaction_type, amount_cents, correlation_id, source_service) VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(&tx.id)
+        .bind(&tx.user_id)
+        .bind(tx.transaction_type.as_str())
+        .bind(tx.amount.cents() as i64)
+        .bind(&tx.correlation_id)
+        .bind(&tx.source_service)
+        .execute(&mut **db_tx)
         .await?;
         Ok(())
     }

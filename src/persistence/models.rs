@@ -1,4 +1,5 @@
 use sqlx::{FromRow, Row, any::AnyRow};
+use chrono::{DateTime, NaiveDateTime, Utc};
 
 /// Database row for the wallets table.
 #[derive(Debug, FromRow)]
@@ -125,8 +126,8 @@ impl TryFrom<HoldRow> for crate::wallet::Hold {
             amount: row.amount,
             status: crate::wallet::HoldStatus::from_str(&row.status)?,
             expires_at: row.expires_at,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
+            created_at: normalize_timestamp(row.created_at),
+            updated_at: normalize_timestamp(row.updated_at),
         })
     }
 }
@@ -141,8 +142,8 @@ impl From<PaymentIntentRow> for crate::wallet::PaymentIntent {
             redirect_url: row.redirect_url,
             va_number: row.va_number,
             payment_channel: row.payment_channel,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
+            created_at: normalize_timestamp(row.created_at),
+            updated_at: normalize_timestamp(row.updated_at),
         }
     }
 }
@@ -155,8 +156,20 @@ impl From<WithdrawalRow> for crate::wallet::WalletWithdrawal {
             amount_cents: row.amount_cents,
             bank_account: row.bank_account,
             status: row.status,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
+            created_at: normalize_timestamp(row.created_at),
+            updated_at: normalize_timestamp(row.updated_at),
         }
     }
+}
+
+fn normalize_timestamp(input: String) -> String {
+    if let Ok(dt) = DateTime::parse_from_rfc3339(&input) {
+        return dt.with_timezone(&Utc).to_rfc3339();
+    }
+
+    if let Ok(naive) = NaiveDateTime::parse_from_str(&input, "%Y-%m-%d %H:%M:%S") {
+        return DateTime::<Utc>::from_utc(naive, Utc).to_rfc3339();
+    }
+
+    input
 }

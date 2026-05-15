@@ -1,4 +1,4 @@
-use sqlx::AnyPool;
+use sqlx::{Any, AnyPool, Transaction};
 
 use crate::persistence::repositories::{
     ProvisioningEventRepository, TransactionRepository, WalletRepository,
@@ -213,45 +213,62 @@ impl WalletService {
             return Err(ServiceError::InvalidPaymentStatus(normalized.to_string()));
         }
 
+        let mut db_tx = self.wallet_repo.begin_tx().await?;
         let payment = self
             .wallet_repo
-            .find_payment_intent(payment_id)
+            .find_payment_intent_tx(&mut db_tx, payment_id)
             .await?
             .ok_or_else(|| ServiceError::TransactionNotFound(payment_id.to_string()))?;
 
-        if payment.status == "PENDING" && normalized != "PENDING" {
-            match normalized {
-                "PAID" => {
-                    self.top_up(
-                        &payment.user_id,
-                        Money::from_cents(payment.amount_cents as u64),
-                    )
-                    .await?;
-                }
-                "FAILED" => {
-                    self.record_status_transaction(
-                        &payment.user_id,
-                        TransactionType::TopUpFailed,
-                        Money::from_cents(payment.amount_cents as u64),
-                        payment_id,
-                    )
-                    .await?;
-                }
-                "EXPIRED" => {
-                    self.record_status_transaction(
-                        &payment.user_id,
-                        TransactionType::TopUpExpired,
-                        Money::from_cents(payment.amount_cents as u64),
-                        payment_id,
-                    )
-                    .await?;
-                }
-                _ => {}
-            }
-            self.wallet_repo
-                .update_payment_status(payment_id, normalized)
-                .await?;
+        if payment.status != "PENDING" || normalized == "PENDING" {
+            return Ok(payment);
         }
+
+        match normalized {
+            "PAID" => {
+                self.mutate_wallet_tx(&mut db_tx, &payment.user_id, |w| {
+                    w.top_up(Money::from_cents(payment.amount_cents as u64))
+                })
+                .await?;
+            }
+            "FAILED" => {
+                self.record_status_transaction_tx(
+                    &mut db_tx,
+                    &payment.user_id,
+                    TransactionType::TopUpFailed,
+                    Money::from_cents(payment.amount_cents as u64),
+                    payment_id,
+                )
+                .await?;
+            }
+            "EXPIRED" => {
+                self.record_status_transaction_tx(
+                    &mut db_tx,
+                    &payment.user_id,
+                    TransactionType::TopUpExpired,
+                    Money::from_cents(payment.amount_cents as u64),
+                    payment_id,
+                )
+                .await?;
+            }
+            _ => {}
+        }
+
+        let updated = self
+            .wallet_repo
+            .update_payment_status_if_pending_tx(&mut db_tx, payment_id, normalized)
+            .await?;
+
+        if !updated {
+            db_tx.rollback().await?;
+            return self
+                .wallet_repo
+                .find_payment_intent(payment_id)
+                .await?
+                .ok_or_else(|| ServiceError::TransactionNotFound(payment_id.to_string()));
+        }
+
+        db_tx.commit().await?;
 
         self.wallet_repo
             .find_payment_intent(payment_id)
@@ -463,6 +480,38 @@ impl WalletService {
         tx.correlation_id = Some(correlation_id.to_string());
         tx.source_service = Some("midtrans".to_string());
         self.tx_repo.insert(&tx).await?;
+        Ok(())
+    }
+
+    async fn mutate_wallet_tx(
+        &self,
+        db_tx: &mut Transaction<'_, Any>,
+        user_id: &str,
+        operation: impl FnOnce(&mut Wallet) -> Result<WalletTransaction, WalletError>,
+    ) -> Result<Wallet, ServiceError> {
+        let mut wallet = self
+            .wallet_repo
+            .find_by_user_id_tx(db_tx, user_id)
+            .await?
+            .ok_or_else(|| ServiceError::WalletNotFound(user_id.to_string()))?;
+        let tx_record = operation(&mut wallet)?;
+        self.tx_repo.insert_tx(db_tx, &tx_record).await?;
+        self.wallet_repo.update_tx(db_tx, &wallet).await?;
+        Ok(wallet)
+    }
+
+    async fn record_status_transaction_tx(
+        &self,
+        db_tx: &mut Transaction<'_, Any>,
+        user_id: &str,
+        tx_type: TransactionType,
+        amount: Money,
+        correlation_id: &str,
+    ) -> Result<(), ServiceError> {
+        let mut tx = WalletTransaction::new(user_id, tx_type, amount);
+        tx.correlation_id = Some(correlation_id.to_string());
+        tx.source_service = Some("midtrans".to_string());
+        self.tx_repo.insert_tx(db_tx, &tx).await?;
         Ok(())
     }
 }

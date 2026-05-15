@@ -84,6 +84,36 @@ struct MidtransTransactionStatusResponse {
     transaction_status: String,
 }
 
+#[derive(Debug, Clone)]
+struct MidtransValidatedBankAccount {
+    bank_code: String,
+    account_number: String,
+    account_name: String,
+}
+
+#[derive(Debug, Clone)]
+struct MidtransPayoutResult {
+    reference_no: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct MidtransAccountValidationResponse {
+    account_name: Option<String>,
+    account_no: Option<String>,
+    bank: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct MidtransPayoutResponse {
+    payouts: Option<Vec<MidtransPayoutItem>>,
+    reference_no: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct MidtransPayoutItem {
+    reference_no: Option<String>,
+}
+
 // ── WalletService ───────────────────────────────────────────────
 
 /// Orchestrates wallet use cases by coordinating domain logic and persistence.
@@ -124,6 +154,41 @@ impl WalletService {
         user_id: &str,
     ) -> Result<Vec<WalletTransaction>, ServiceError> {
         Ok(self.tx_repo.find_by_user_id(user_id).await?)
+    }
+
+    pub async fn get_unpaid_payment_intents(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<PaymentIntent>, ServiceError> {
+        let payments = self
+            .wallet_repo
+            .find_unpaid_payment_intents_by_user(user_id)
+            .await?;
+        let mut reconciled = Vec::with_capacity(payments.len());
+
+        for payment in payments {
+            reconciled.push(self.expire_payment_if_needed(payment).await?);
+        }
+
+        Ok(reconciled)
+    }
+
+    pub async fn get_payment_intent_for_user(
+        &self,
+        user_id: &str,
+        payment_id: &str,
+    ) -> Result<PaymentIntent, ServiceError> {
+        let payment = self
+            .wallet_repo
+            .find_payment_intent(payment_id)
+            .await?
+            .ok_or_else(|| ServiceError::TransactionNotFound(payment_id.to_string()))?;
+
+        if payment.user_id != user_id {
+            return Err(ServiceError::ForbiddenAccess);
+        }
+
+        self.expire_payment_if_needed(payment).await
     }
 
     // ── Commands ─────────────────────────────────────────────────
@@ -195,6 +260,7 @@ impl WalletService {
             .await?
             .ok_or_else(|| ServiceError::TransactionNotFound(payment_id.to_string()))?;
 
+        let payment = self.expire_payment_if_needed(payment).await?;
         if payment.status != "PENDING" {
             return Ok(payment);
         }
@@ -259,21 +325,49 @@ impl WalletService {
             .ok_or_else(|| ServiceError::TransactionNotFound(payment_id.to_string()))
     }
 
+    async fn expire_payment_if_needed(
+        &self,
+        payment: PaymentIntent,
+    ) -> Result<PaymentIntent, ServiceError> {
+        if payment.status == "PENDING" && payment_is_expired(&payment.created_at) {
+            return self.apply_payment_status(&payment.id, "EXPIRED").await;
+        }
+
+        Ok(payment)
+    }
+
     pub async fn create_withdrawal(
         &self,
         user_id: &str,
         amount: Money,
-        bank_account: &str,
+        bank_code: &str,
+        account_number: &str,
     ) -> Result<WalletWithdrawal, ServiceError> {
-        if bank_account.trim().is_empty() {
+        if amount.is_zero() {
+            return Err(ServiceError::Domain(WalletError::InvalidAmount));
+        }
+        let bank_code = normalize_bank_code(bank_code)?;
+        let account_number = normalize_account_number(account_number)?;
+        let validated_account = validate_midtrans_bank_account(&bank_code, &account_number).await?;
+        let payout = create_midtrans_payout(user_id, amount, &validated_account).await?;
+
+        if payout.reference_no.trim().is_empty() {
             return Err(ServiceError::InvalidPaymentStatus(
-                "missing bank account".to_string(),
+                "missing payout reference".to_string(),
             ));
         }
+
         self.withdraw(user_id, amount).await?;
         Ok(self
             .wallet_repo
-            .insert_withdrawal(user_id, amount, bank_account)
+            .insert_withdrawal(
+                user_id,
+                amount,
+                &validated_account.bank_code,
+                &validated_account.account_number,
+                &validated_account.account_name,
+                &payout.reference_no,
+            )
             .await?)
     }
 
@@ -467,6 +561,48 @@ impl WalletService {
     }
 }
 
+const PAYMENT_EXPIRY_MINUTES: i64 = 10;
+
+pub fn payment_expires_at(created_at: &str) -> String {
+    parse_payment_created_at(created_at)
+        .map(|created| (created + chrono::Duration::minutes(PAYMENT_EXPIRY_MINUTES)).to_rfc3339())
+        .unwrap_or_else(|| created_at.to_string())
+}
+
+fn payment_is_expired(created_at: &str) -> bool {
+    parse_payment_created_at(created_at)
+        .map(|created| {
+            chrono::Utc::now() >= created + chrono::Duration::minutes(PAYMENT_EXPIRY_MINUTES)
+        })
+        .unwrap_or(false)
+}
+
+fn parse_payment_created_at(created_at: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    chrono::DateTime::parse_from_rfc3339(created_at)
+        .map(|value| value.with_timezone(&chrono::Utc))
+        .ok()
+        .or_else(|| {
+            chrono::DateTime::parse_from_str(created_at, "%Y-%m-%d %H:%M:%S%.f %:z")
+                .map(|value| value.with_timezone(&chrono::Utc))
+                .ok()
+        })
+        .or_else(|| {
+            chrono::DateTime::parse_from_str(created_at, "%Y-%m-%d %H:%M:%S%.f%:z")
+                .map(|value| value.with_timezone(&chrono::Utc))
+                .ok()
+        })
+        .or_else(|| {
+            chrono::NaiveDateTime::parse_from_str(created_at, "%Y-%m-%d %H:%M:%S")
+                .ok()
+                .map(|value| value.and_utc())
+        })
+        .or_else(|| {
+            chrono::NaiveDateTime::parse_from_str(created_at, "%Y-%m-%d %H:%M:%S%.f")
+                .ok()
+                .map(|value| value.and_utc())
+        })
+}
+
 fn map_midtrans_transaction_status(status: &str) -> Result<String, ServiceError> {
     let normalized = status.to_ascii_lowercase();
     match normalized.as_str() {
@@ -476,6 +612,170 @@ fn map_midtrans_transaction_status(status: &str) -> Result<String, ServiceError>
         "pending" => Ok("PENDING".to_string()),
         other => Err(ServiceError::InvalidPaymentStatus(other.to_string())),
     }
+}
+
+const SUPPORTED_IRIS_BANKS: &[&str] = &[
+    "bca", "bni", "bri", "mandiri", "permata", "cimb", "danamon", "bsi", "btn", "ocbc", "panin",
+];
+
+fn normalize_bank_code(bank_code: &str) -> Result<String, ServiceError> {
+    let normalized = bank_code.trim().to_ascii_lowercase();
+    if normalized.is_empty() || !SUPPORTED_IRIS_BANKS.contains(&normalized.as_str()) {
+        return Err(ServiceError::InvalidPaymentStatus(format!(
+            "unsupported bank code: {bank_code}"
+        )));
+    }
+    Ok(normalized)
+}
+
+fn normalize_account_number(account_number: &str) -> Result<String, ServiceError> {
+    let normalized: String = account_number
+        .chars()
+        .filter(|character| !character.is_whitespace() && *character != '-')
+        .collect();
+
+    if normalized.len() < 6
+        || normalized.len() > 32
+        || !normalized.chars().all(|c| c.is_ascii_digit())
+    {
+        return Err(ServiceError::InvalidPaymentStatus(
+            "invalid bank account number".to_string(),
+        ));
+    }
+
+    Ok(normalized)
+}
+
+fn iris_credentials() -> Option<(String, String)> {
+    let api_key = std::env::var("MIDTRANS_IRIS_API_KEY")
+        .or_else(|_| std::env::var("IRIS_API_KEY"))
+        .unwrap_or_default();
+    let merchant_key = std::env::var("MIDTRANS_IRIS_MERCHANT_KEY")
+        .or_else(|_| std::env::var("IRIS_MERCHANT_KEY"))
+        .unwrap_or_default();
+
+    if api_key.is_empty()
+        || merchant_key.is_empty()
+        || api_key == "IRIS-api-key-local"
+        || merchant_key == "IRIS-merchant-key-local"
+    {
+        None
+    } else {
+        Some((api_key, merchant_key))
+    }
+}
+
+fn iris_base_url() -> String {
+    std::env::var("MIDTRANS_IRIS_BASE_URL")
+        .or_else(|_| std::env::var("IRIS_BASE_URL"))
+        .unwrap_or_else(|_| "https://app.sandbox.midtrans.com/iris/api/v1".to_string())
+}
+
+async fn validate_midtrans_bank_account(
+    bank_code: &str,
+    account_number: &str,
+) -> Result<MidtransValidatedBankAccount, ServiceError> {
+    let Some((api_key, _merchant_key)) = iris_credentials() else {
+        return Ok(MidtransValidatedBankAccount {
+            bank_code: bank_code.to_string(),
+            account_number: account_number.to_string(),
+            account_name: "Validated Development Account".to_string(),
+        });
+    };
+
+    let response = reqwest::Client::new()
+        .get(format!(
+            "{}/account_validation",
+            iris_base_url().trim_end_matches('/')
+        ))
+        .basic_auth(api_key, Some(""))
+        .query(&[("bank", bank_code), ("account", account_number)])
+        .send()
+        .await
+        .map_err(|error| ServiceError::Midtrans(error.to_string()))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(ServiceError::Midtrans(format!(
+            "IRIS account validation returned {status}: {body}"
+        )));
+    }
+
+    let validation = response
+        .json::<MidtransAccountValidationResponse>()
+        .await
+        .map_err(|error| ServiceError::Midtrans(error.to_string()))?;
+    let account_name = validation
+        .account_name
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            ServiceError::Midtrans(
+                "IRIS account validation did not return account name".to_string(),
+            )
+        })?;
+
+    Ok(MidtransValidatedBankAccount {
+        bank_code: validation.bank.unwrap_or_else(|| bank_code.to_string()),
+        account_number: validation
+            .account_no
+            .unwrap_or_else(|| account_number.to_string()),
+        account_name,
+    })
+}
+
+async fn create_midtrans_payout(
+    user_id: &str,
+    amount: Money,
+    account: &MidtransValidatedBankAccount,
+) -> Result<MidtransPayoutResult, ServiceError> {
+    let reference_no = format!("WD-{}", uuid::Uuid::new_v4());
+    let Some((api_key, _merchant_key)) = iris_credentials() else {
+        return Ok(MidtransPayoutResult { reference_no });
+    };
+
+    let body = serde_json::json!({
+        "payouts": [{
+            "beneficiary_name": account.account_name,
+            "beneficiary_account": account.account_number,
+            "beneficiary_bank": account.bank_code,
+            "beneficiary_email": format!("{user_id}@bidmart.local"),
+            "amount": amount.cents(),
+            "notes": "BidMart wallet withdrawal",
+            "reference_no": reference_no
+        }]
+    });
+
+    let response = reqwest::Client::new()
+        .post(format!("{}/payouts", iris_base_url().trim_end_matches('/')))
+        .basic_auth(api_key, Some(""))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|error| ServiceError::Midtrans(error.to_string()))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(ServiceError::Midtrans(format!(
+            "IRIS payout creation returned {status}: {body}"
+        )));
+    }
+
+    let payout = response
+        .json::<MidtransPayoutResponse>()
+        .await
+        .map_err(|error| ServiceError::Midtrans(error.to_string()))?;
+    let response_reference = payout
+        .payouts
+        .and_then(|mut payouts| payouts.pop())
+        .and_then(|item| item.reference_no)
+        .or(payout.reference_no)
+        .unwrap_or(reference_no);
+
+    Ok(MidtransPayoutResult {
+        reference_no: response_reference,
+    })
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -490,7 +790,12 @@ enum MidtransPaymentMethod {
 
 impl MidtransPaymentMethod {
     fn parse(value: Option<&str>) -> Result<Self, ServiceError> {
-        match value.unwrap_or("bca_va").trim().to_ascii_lowercase().as_str() {
+        match value
+            .unwrap_or("bca_va")
+            .trim()
+            .to_ascii_lowercase()
+            .as_str()
+        {
             "bca" | "bca_va" => Ok(Self::BcaVa),
             "bni" | "bni_va" => Ok(Self::BniVa),
             "bri" | "bri_va" => Ok(Self::BriVa),
@@ -555,7 +860,10 @@ impl MidtransPaymentMethod {
         }
     }
 
-    fn payment_page(self, charge: MidtransBankTransferChargeResponse) -> Result<MidtransPaymentPage, ServiceError> {
+    fn payment_page(
+        self,
+        charge: MidtransBankTransferChargeResponse,
+    ) -> Result<MidtransPaymentPage, ServiceError> {
         let _ = charge.transaction_status.as_deref();
         let simulator = simulator_url_for(self);
         let instruction = match self {
@@ -611,12 +919,24 @@ fn simulator_url_for(method: MidtransPaymentMethod) -> String {
         MidtransPaymentMethod::Qris => "MIDTRANS_QRIS_SIMULATOR_URL",
     };
     std::env::var(key).unwrap_or_else(|_| match method {
-        MidtransPaymentMethod::BcaVa => "https://simulator.sandbox.midtrans.com/bca/va/index".to_string(),
-        MidtransPaymentMethod::BniVa => "https://simulator.sandbox.midtrans.com/bni/va/index".to_string(),
-        MidtransPaymentMethod::BriVa => "https://simulator.sandbox.midtrans.com/bri/va/index".to_string(),
-        MidtransPaymentMethod::PermataVa => "https://simulator.sandbox.midtrans.com/openapi/va/index".to_string(),
-        MidtransPaymentMethod::MandiriBill => "https://simulator.sandbox.midtrans.com/openapi/mandiri/index".to_string(),
-        MidtransPaymentMethod::Qris => "https://simulator.sandbox.midtrans.com/qris/index".to_string(),
+        MidtransPaymentMethod::BcaVa => {
+            "https://simulator.sandbox.midtrans.com/bca/va/index".to_string()
+        }
+        MidtransPaymentMethod::BniVa => {
+            "https://simulator.sandbox.midtrans.com/bni/va/index".to_string()
+        }
+        MidtransPaymentMethod::BriVa => {
+            "https://simulator.sandbox.midtrans.com/bri/va/index".to_string()
+        }
+        MidtransPaymentMethod::PermataVa => {
+            "https://simulator.sandbox.midtrans.com/openapi/va/index".to_string()
+        }
+        MidtransPaymentMethod::MandiriBill => {
+            "https://simulator.sandbox.midtrans.com/openapi/mandiri/index".to_string()
+        }
+        MidtransPaymentMethod::Qris => {
+            "https://simulator.sandbox.midtrans.com/qris/index".to_string()
+        }
     })
 }
 
@@ -682,7 +1002,11 @@ async fn fetch_midtrans_transaction_status(payment_id: &str) -> Result<String, S
     }
 
     let response = reqwest::Client::new()
-        .get(format!("{}/{}/status", status_base_url.trim_end_matches('/'), payment_id))
+        .get(format!(
+            "{}/{}/status",
+            status_base_url.trim_end_matches('/'),
+            payment_id
+        ))
         .basic_auth(server_key, Some(""))
         .send()
         .await

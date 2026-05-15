@@ -23,6 +23,7 @@ pub fn create_router(service: WalletService) -> Router {
         .route("/convert", post(convert_funds))
         .route("/:userId", get(get_wallet))
         .route("/:userId/detail", get(get_wallet_detail))
+        .route("/:userId/payments/:paymentId", get(get_payment_intent))
         .route("/:userId/top-up", post(top_up))
         .route("/:userId/top-up/intent", post(create_top_up_intent))
         .route("/:userId/withdraw", post(withdraw))
@@ -72,7 +73,21 @@ async fn get_wallet_detail(
             .iter()
             .map(WalletTransactionResponse::from)
             .collect(),
+        unpaid_payments: match svc.get_unpaid_payment_intents(&user_id).await {
+            Ok(payments) => payments.iter().map(PaymentIntentResponse::from).collect(),
+            Err(e) => return Err(map_error(e)),
+        },
     }))
+}
+
+async fn get_payment_intent(
+    State(svc): State<AppState>,
+    Path((user_id, payment_id)): Path<(String, String)>,
+) -> impl IntoResponse {
+    match svc.get_payment_intent_for_user(&user_id, &payment_id).await {
+        Ok(payment) => Ok(Json(PaymentIntentResponse::from(&payment))),
+        Err(e) => Err(map_error(e)),
+    }
 }
 
 async fn add_wallet(
@@ -230,7 +245,8 @@ async fn create_withdrawal(
         .create_withdrawal(
             &user_id,
             Money::from_cents(req.amount_cents),
-            &req.bank_account,
+            &req.bank_code,
+            &req.account_number,
         )
         .await
     {

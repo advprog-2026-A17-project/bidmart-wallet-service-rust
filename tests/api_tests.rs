@@ -1,14 +1,20 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
+use sqlx::AnyPool;
 use tower::ServiceExt;
 
 use bidmart_wallet_service_rust::server;
 
 async fn setup_app() -> axum::Router {
+    let (app, _) = setup_app_with_pool().await;
+    app
+}
+
+async fn setup_app_with_pool() -> (axum::Router, AnyPool) {
     let pool = server::connect_pool("sqlite::memory:").await.unwrap();
     server::run_migrations(&pool).await.unwrap();
-    server::build_router(pool)
+    (server::build_router(pool.clone()), pool)
 }
 
 async fn body_to_json(body: Body) -> serde_json::Value {
@@ -140,6 +146,72 @@ async fn midtrans_top_up_intent_returns_pending_payment_without_crediting_wallet
     let get_resp = app.clone().oneshot(get_req).await.unwrap();
     let wallet = body_to_json(get_resp.into_body()).await;
     assert_eq!(wallet["activeBalance"], 0);
+}
+
+#[tokio::test]
+async fn wallet_detail_exposes_unpaid_payment_history_and_payment_detail_expires() {
+    let (app, pool) = setup_app_with_pool().await;
+
+    let create = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/add")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"userId":"user-1"}"#))
+        .unwrap();
+    let _ = app.clone().oneshot(create).await.unwrap();
+
+    let intent = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/user-1/top-up/intent")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            r#"{"amountCents":5000,"paymentMethod":"bca_va"}"#,
+        ))
+        .unwrap();
+    let intent_resp = app.clone().oneshot(intent).await.unwrap();
+    assert_eq!(intent_resp.status(), StatusCode::CREATED);
+    let intent_json = body_to_json(intent_resp.into_body()).await;
+    let payment_id = intent_json["paymentId"].as_str().unwrap();
+    assert_eq!(intent_json["status"], "PENDING");
+    assert!(intent_json["expiresAt"].as_str().unwrap().len() > 10);
+
+    let detail = Request::builder()
+        .uri("/api/v1/wallet/user-1/detail")
+        .body(Body::empty())
+        .unwrap();
+    let detail_resp = app.clone().oneshot(detail).await.unwrap();
+    let detail_json = body_to_json(detail_resp.into_body()).await;
+    let unpaid = detail_json["unpaidPayments"].as_array().unwrap();
+    assert_eq!(unpaid.len(), 1);
+    assert_eq!(unpaid[0]["paymentId"], payment_id);
+
+    sqlx::query("UPDATE wallet_payment_intents SET created_at = $1 WHERE id = $2")
+        .bind("2000-01-01T00:00:00Z")
+        .bind(payment_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let payment_detail = Request::builder()
+        .uri(format!("/api/v1/wallet/user-1/payments/{payment_id}"))
+        .body(Body::empty())
+        .unwrap();
+    let payment_resp = app.clone().oneshot(payment_detail).await.unwrap();
+    assert_eq!(payment_resp.status(), StatusCode::OK);
+    let payment_json = body_to_json(payment_resp.into_body()).await;
+    assert_eq!(payment_json["status"], "EXPIRED");
+    assert_eq!(payment_json["vaNumber"], serde_json::Value::Null);
+
+    let detail_after_expiry = Request::builder()
+        .uri("/api/v1/wallet/user-1/detail")
+        .body(Body::empty())
+        .unwrap();
+    let detail_after_expiry_resp = app.clone().oneshot(detail_after_expiry).await.unwrap();
+    let detail_after_expiry_json = body_to_json(detail_after_expiry_resp.into_body()).await;
+    let history = detail_after_expiry_json["history"].as_array().unwrap();
+    assert!(history.iter().any(|entry| {
+        entry["type"] == "TOP_UP_EXPIRED" && entry["correlationId"] == payment_id
+    }));
 }
 
 #[tokio::test]
@@ -522,16 +594,20 @@ async fn midtrans_failed_withdrawal_reverses_reserved_balance() {
         .uri("/api/v1/wallet/user-1/withdrawals")
         .header("content-type", "application/json")
         .body(Body::from(
-            r#"{"amountCents":3000,"bankAccount":"1234567890"}"#,
+            r#"{"amountCents":3000,"bankCode":"bca","accountNumber":"1234567890"}"#,
         ))
         .unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::CREATED);
-
+    let status = resp.status();
     let json = body_to_json(resp.into_body()).await;
+    assert_eq!(status, StatusCode::CREATED, "{json}");
     let withdrawal_id = json["withdrawalId"].as_str().unwrap();
     assert_eq!(json["amountCents"], 3000);
     assert_eq!(json["status"], "PENDING");
+    assert_eq!(json["bankCode"], "bca");
+    assert_eq!(json["accountNumber"], "1234567890");
+    assert_eq!(json["accountName"], "Validated Development Account");
+    assert!(json["payoutReference"].as_str().unwrap().starts_with("WD-"));
 
     let after_reserve = Request::builder()
         .uri("/api/v1/wallet/user-1")

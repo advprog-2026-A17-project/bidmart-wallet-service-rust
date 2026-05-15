@@ -51,7 +51,8 @@ pub struct PaymentIntentRequest {
 #[serde(rename_all = "camelCase")]
 pub struct WithdrawalRequest {
     pub amount_cents: u64,
-    pub bank_account: String,
+    pub bank_code: String,
+    pub account_number: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -90,6 +91,8 @@ pub struct WalletTransactionResponse {
     pub transaction_type: String,
     pub amount: u64,
     pub timestamp: String,
+    pub correlation_id: Option<String>,
+    pub source_service: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -97,6 +100,7 @@ pub struct WalletTransactionResponse {
 pub struct WalletDetailResponse {
     pub wallet: WalletResponse,
     pub history: Vec<WalletTransactionResponse>,
+    pub unpaid_payments: Vec<PaymentIntentResponse>,
 }
 
 #[derive(Debug, Serialize)]
@@ -134,6 +138,9 @@ pub struct PaymentIntentResponse {
     pub redirect_url: String,
     pub va_number: Option<String>,
     pub payment_channel: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub expires_at: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -142,6 +149,10 @@ pub struct WithdrawalResponse {
     pub withdrawal_id: String,
     pub amount_cents: u64,
     pub status: String,
+    pub bank_code: Option<String>,
+    pub account_number: Option<String>,
+    pub account_name: Option<String>,
+    pub payout_reference: Option<String>,
 }
 
 // ── Conversions ─────────────────────────────────────────────────
@@ -165,6 +176,8 @@ impl From<&WalletTransaction> for WalletTransactionResponse {
             transaction_type: tx.transaction_type.as_str().to_string(),
             amount: tx.amount.cents(),
             timestamp: tx.created_at.clone().unwrap_or_default(),
+            correlation_id: tx.correlation_id.clone(),
+            source_service: tx.source_service.clone(),
         }
     }
 }
@@ -194,6 +207,9 @@ impl From<&PaymentIntent> for PaymentIntentResponse {
             redirect_url: payment.redirect_url.clone(),
             va_number: payment.va_number.clone(),
             payment_channel: payment.payment_channel.clone(),
+            created_at: payment.created_at.clone(),
+            updated_at: payment.updated_at.clone(),
+            expires_at: crate::service::wallet_service::payment_expires_at(&payment.created_at),
         }
     }
 }
@@ -204,6 +220,10 @@ impl From<&WalletWithdrawal> for WithdrawalResponse {
             withdrawal_id: withdrawal.id.clone(),
             amount_cents: withdrawal.amount_cents as u64,
             status: withdrawal.status.clone(),
+            bank_code: withdrawal.bank_code.clone(),
+            account_number: withdrawal.account_number.clone(),
+            account_name: withdrawal.account_name.clone(),
+            payout_reference: withdrawal.payout_reference.clone(),
         }
     }
 }

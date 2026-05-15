@@ -63,6 +63,11 @@ CREATE TABLE IF NOT EXISTS wallet_withdrawals (
     user_id      TEXT NOT NULL,
     amount_cents INTEGER NOT NULL,
     bank_account TEXT NOT NULL,
+    bank_code    TEXT,
+    account_number TEXT,
+    account_name TEXT,
+    payout_reference TEXT,
+    failure_reason TEXT,
     status       TEXT NOT NULL,
     created_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP

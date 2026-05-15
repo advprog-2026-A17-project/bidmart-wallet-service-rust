@@ -95,8 +95,16 @@ async fn insert_and_find_transactions_by_user_id() {
 
     let history = repo.find_by_user_id("user-1").await.unwrap();
     assert_eq!(history.len(), 2);
-    assert!(history.iter().any(|tx| tx.transaction_type == TransactionType::Hold));
-    assert!(history.iter().any(|tx| tx.transaction_type == TransactionType::TopUp));
+    assert!(
+        history
+            .iter()
+            .any(|tx| tx.transaction_type == TransactionType::Hold)
+    );
+    assert!(
+        history
+            .iter()
+            .any(|tx| tx.transaction_type == TransactionType::TopUp)
+    );
 }
 
 #[tokio::test]

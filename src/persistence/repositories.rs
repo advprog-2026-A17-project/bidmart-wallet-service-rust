@@ -16,10 +16,8 @@ const TX_COLS: &str =
 const PROV_COLS: &str = "event_id, user_id, email, occurred_at, source, processed_at";
 const HOLD_COLS: &str =
     "id, wallet_id, auction_id, bid_id, amount, status, expires_at, created_at, updated_at";
-const PAYMENT_COLS: &str =
-    "id, user_id, amount_cents, status, redirect_url, va_number, payment_channel, created_at, updated_at";
-const WITHDRAWAL_COLS: &str =
-    "id, user_id, amount_cents, bank_account, status, created_at, updated_at";
+const PAYMENT_COLS: &str = "id, user_id, amount_cents, status, redirect_url, va_number, payment_channel, created_at, updated_at";
+const WITHDRAWAL_COLS: &str = "id, user_id, amount_cents, bank_account, bank_code, account_number, account_name, payout_reference, failure_reason, status, created_at, updated_at";
 
 // ── Row → Domain mappers ────────────────────────────────────────
 
@@ -344,8 +342,9 @@ impl WalletRepository {
         va_number: Option<&str>,
         payment_channel: Option<&str>,
     ) -> Result<PaymentIntent, sqlx::Error> {
+        let now = chrono::Utc::now().to_rfc3339();
         sqlx::query(
-            "INSERT INTO wallet_payment_intents (id, user_id, amount_cents, status, redirect_url, va_number, payment_channel) VALUES ($1, $2, $3, 'PENDING', $4, $5, $6)",
+            "INSERT INTO wallet_payment_intents (id, user_id, amount_cents, status, redirect_url, va_number, payment_channel, created_at, updated_at) VALUES ($1, $2, $3, 'PENDING', $4, $5, $6, $7, $7)",
         )
         .bind(payment_id)
         .bind(user_id)
@@ -353,6 +352,7 @@ impl WalletRepository {
         .bind(redirect_url)
         .bind(va_number)
         .bind(payment_channel)
+        .bind(now)
         .execute(&self.pool)
         .await?;
 
@@ -374,6 +374,21 @@ impl WalletRepository {
         Ok(row.map(PaymentIntent::from))
     }
 
+    pub async fn find_unpaid_payment_intents_by_user(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<PaymentIntent>, sqlx::Error> {
+        let sql = format!(
+            "SELECT {PAYMENT_COLS} FROM wallet_payment_intents WHERE user_id = $1 AND status IN ('PENDING', 'EXPIRED', 'FAILED') ORDER BY created_at DESC, id DESC"
+        );
+        let rows: Vec<PaymentIntentRow> = sqlx::query_as(&sql)
+            .bind(user_id)
+            .fetch_all(&self.pool)
+            .await?;
+
+        Ok(rows.into_iter().map(PaymentIntent::from).collect())
+    }
+
     pub async fn update_payment_status(
         &self,
         payment_id: &str,
@@ -393,16 +408,23 @@ impl WalletRepository {
         &self,
         user_id: &str,
         amount: Money,
-        bank_account: &str,
+        bank_code: &str,
+        account_number: &str,
+        account_name: &str,
+        payout_reference: &str,
     ) -> Result<WalletWithdrawal, sqlx::Error> {
         let withdrawal_id = uuid::Uuid::new_v4().to_string();
         sqlx::query(
-            "INSERT INTO wallet_withdrawals (id, user_id, amount_cents, bank_account, status) VALUES ($1, $2, $3, $4, 'PENDING')",
+            "INSERT INTO wallet_withdrawals (id, user_id, amount_cents, bank_account, bank_code, account_number, account_name, payout_reference, status) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'PENDING')",
         )
         .bind(&withdrawal_id)
         .bind(user_id)
         .bind(amount.cents() as i64)
-        .bind(bank_account)
+        .bind(format!("{bank_code}:{account_number}"))
+        .bind(bank_code)
+        .bind(account_number)
+        .bind(account_name)
+        .bind(payout_reference)
         .execute(&self.pool)
         .await?;
 

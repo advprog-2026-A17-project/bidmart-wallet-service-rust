@@ -138,6 +138,7 @@ pub enum WalletError {
 pub struct WalletTransaction {
     pub id: String,
     pub user_id: String,
+    pub role: String,
     pub transaction_type: TransactionType,
     pub amount: Money,
     pub created_at: Option<String>,
@@ -146,10 +147,11 @@ pub struct WalletTransaction {
 }
 
 impl WalletTransaction {
-    pub fn new(user_id: &str, transaction_type: TransactionType, amount: Money) -> Self {
+    pub fn new(user_id: &str, role: &str, transaction_type: TransactionType, amount: Money) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             user_id: user_id.to_string(),
+            role: role.to_string(),
             transaction_type,
             amount,
             created_at: None,
@@ -170,6 +172,7 @@ impl WalletTransaction {
 pub struct Wallet {
     id: String,
     user_id: String,
+    role: String,
     active_balance: Money,
     held_balance: Money,
     version: i64,
@@ -177,10 +180,11 @@ pub struct Wallet {
 
 impl Wallet {
     /// Create a brand-new wallet with zero balances.
-    pub fn new(user_id: &str) -> Self {
+    pub fn new(user_id: &str, role: &str) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             user_id: user_id.to_string(),
+            role: role.to_string(),
             active_balance: Money::zero(),
             held_balance: Money::zero(),
             version: 0,
@@ -191,6 +195,7 @@ impl Wallet {
     pub fn with_balances(
         id: String,
         user_id: String,
+        role: String,
         active_balance: Money,
         held_balance: Money,
         version: i64,
@@ -198,6 +203,7 @@ impl Wallet {
         Self {
             id,
             user_id,
+            role,
             active_balance,
             held_balance,
             version,
@@ -216,6 +222,10 @@ impl Wallet {
 
     pub fn user_id(&self) -> &str {
         &self.user_id
+    }
+
+    pub fn role(&self) -> &str {
+        &self.role
     }
 
     pub fn active_balance(&self) -> Money {
@@ -296,7 +306,7 @@ impl Wallet {
     }
 
     fn record(&self, tx_type: TransactionType, amount: Money) -> WalletTransaction {
-        WalletTransaction::new(&self.user_id, tx_type, amount)
+        WalletTransaction::new(&self.user_id, &self.role, tx_type, amount)
     }
 }
 
@@ -348,6 +358,7 @@ pub struct Hold {
 pub struct PaymentIntent {
     pub id: String,
     pub user_id: String,
+    pub role: String,
     pub amount_cents: i64,
     pub status: String,
     pub redirect_url: String,
@@ -361,6 +372,7 @@ pub struct PaymentIntent {
 pub struct WalletWithdrawal {
     pub id: String,
     pub user_id: String,
+    pub role: String,
     pub amount_cents: i64,
     pub bank_account: String,
     pub bank_code: Option<String>,

@@ -5,6 +5,7 @@ use sqlx::{FromRow, Row, any::AnyRow};
 pub struct WalletRow {
     pub id: String,
     pub user_id: String,
+    pub role: String,
     pub active_balance_cents: i64,
     pub held_balance_cents: i64,
     pub version: i64,
@@ -15,6 +16,7 @@ pub struct WalletRow {
 pub struct TransactionRow {
     pub id: String,
     pub user_id: String,
+    pub role: String,
     pub transaction_type: String,
     pub amount_cents: i64,
     pub created_at: String,
@@ -50,6 +52,7 @@ pub struct HoldRow {
 pub struct PaymentIntentRow {
     pub id: String,
     pub user_id: String,
+    pub role: String,
     pub amount_cents: i64,
     pub status: String,
     pub redirect_url: String,
@@ -64,6 +67,7 @@ impl<'r> FromRow<'r, AnyRow> for PaymentIntentRow {
         Ok(Self {
             id: row.try_get("id")?,
             user_id: row.try_get("user_id")?,
+            role: row.try_get("role")?,
             amount_cents: row.try_get("amount_cents")?,
             status: row.try_get("status")?,
             redirect_url: row.try_get("redirect_url")?,
@@ -79,6 +83,7 @@ impl<'r> FromRow<'r, AnyRow> for PaymentIntentRow {
 pub struct WithdrawalRow {
     pub id: String,
     pub user_id: String,
+    pub role: String,
     pub amount_cents: i64,
     pub bank_account: String,
     pub bank_code: Option<String>,
@@ -96,6 +101,7 @@ impl<'r> FromRow<'r, AnyRow> for WithdrawalRow {
         Ok(Self {
             id: row.try_get("id")?,
             user_id: row.try_get("user_id")?,
+            role: row.try_get("role")?,
             amount_cents: row.try_get("amount_cents")?,
             bank_account: row.try_get("bank_account")?,
             bank_code: optional_string(row, "bank_code")?,
@@ -127,6 +133,7 @@ impl<'r> FromRow<'r, AnyRow> for TransactionRow {
         Ok(Self {
             id: row.try_get("id")?,
             user_id: row.try_get("user_id")?,
+            role: row.try_get("role")?,
             transaction_type: row.try_get("transaction_type")?,
             amount_cents: row.try_get("amount_cents")?,
             created_at: row.try_get("created_at")?,
@@ -160,6 +167,7 @@ impl From<PaymentIntentRow> for crate::wallet::PaymentIntent {
         Self {
             id: row.id,
             user_id: row.user_id,
+            role: row.role,
             amount_cents: row.amount_cents,
             status: row.status,
             redirect_url: row.redirect_url,
@@ -176,6 +184,7 @@ impl From<WithdrawalRow> for crate::wallet::WalletWithdrawal {
         Self {
             id: row.id,
             user_id: row.user_id,
+            role: row.role,
             amount_cents: row.amount_cents,
             bank_account: row.bank_account,
             bank_code: row.bank_code,

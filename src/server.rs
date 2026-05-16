@@ -36,9 +36,24 @@ pub async fn run_migrations(pool: &AnyPool) -> Result<(), sqlx::Error> {
             sqlx::query(trimmed).execute(pool).await?;
         }
     }
+    ensure_role_columns(pool).await;
     ensure_payment_intent_columns(pool).await;
     ensure_withdrawal_columns(pool).await;
     Ok(())
+}
+
+async fn ensure_role_columns(pool: &AnyPool) {
+    let tables = [
+        "wallets",
+        "wallet_transactions",
+        "wallet_payment_intents",
+        "wallet_withdrawals",
+    ];
+
+    for table in tables {
+        let sql = format!("ALTER TABLE {table} ADD COLUMN role TEXT NOT NULL DEFAULT 'BUYER'");
+        let _ = sqlx::query(&sql).execute(pool).await;
+    }
 }
 
 async fn ensure_payment_intent_columns(pool: &AnyPool) {

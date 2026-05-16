@@ -1,9 +1,11 @@
 CREATE TABLE IF NOT EXISTS wallets (
     id                   TEXT PRIMARY KEY,
-    user_id              TEXT NOT NULL UNIQUE,
+    user_id              TEXT NOT NULL,
+    role                 TEXT NOT NULL DEFAULT 'BUYER',
     active_balance_cents INTEGER NOT NULL DEFAULT 0,
     held_balance_cents   INTEGER NOT NULL DEFAULT 0,
-    version              INTEGER NOT NULL DEFAULT 0
+    version              INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(user_id, role)
 );
 
 CREATE TABLE IF NOT EXISTS wallet_transactions (

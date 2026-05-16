@@ -8,6 +8,7 @@ use crate::wallet::{PaymentIntent, Wallet, WalletTransaction, WalletWithdrawal};
 #[serde(rename_all = "camelCase")]
 pub struct WalletCreateRequest {
     pub user_id: String,
+    pub role: Option<String>,
     pub active_balance: Option<u64>,
     pub held_balance: Option<u64>,
 }
@@ -16,6 +17,7 @@ pub struct WalletCreateRequest {
 #[serde(rename_all = "camelCase")]
 pub struct HoldFundsRequest {
     pub user_id: String,
+    pub role: Option<String>,
     pub hold_id: String,
     pub auction_id: String,
     pub bid_id: String,
@@ -38,12 +40,19 @@ pub struct ConvertFundsRequest {
 #[derive(Debug, Deserialize)]
 pub struct AmountQuery {
     pub amount: u64,
+    pub role: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RoleQuery {
+    pub role: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PaymentIntentRequest {
     pub amount_cents: u64,
+    pub role: Option<String>,
     pub payment_method: Option<String>,
 }
 
@@ -51,6 +60,7 @@ pub struct PaymentIntentRequest {
 #[serde(rename_all = "camelCase")]
 pub struct WithdrawalRequest {
     pub amount_cents: u64,
+    pub role: Option<String>,
     pub bank_code: String,
     pub account_number: String,
 }
@@ -78,6 +88,7 @@ pub struct MidtransPaymentReturnRequest {
 pub struct WalletResponse {
     pub id: String,
     pub user_id: String,
+    pub role: String,
     pub active_balance: u64,
     pub held_balance: u64,
 }
@@ -87,6 +98,7 @@ pub struct WalletResponse {
 pub struct WalletTransactionResponse {
     pub id: String,
     pub user_id: String,
+    pub role: String,
     #[serde(rename = "type")]
     pub transaction_type: String,
     pub amount: u64,
@@ -134,6 +146,7 @@ pub struct StructuredErrorResponse {
 pub struct PaymentIntentResponse {
     pub payment_id: String,
     pub amount_cents: u64,
+    pub role: String,
     pub status: String,
     pub redirect_url: String,
     pub va_number: Option<String>,
@@ -148,6 +161,7 @@ pub struct PaymentIntentResponse {
 pub struct WithdrawalResponse {
     pub withdrawal_id: String,
     pub amount_cents: u64,
+    pub role: String,
     pub status: String,
     pub bank_code: Option<String>,
     pub account_number: Option<String>,
@@ -162,6 +176,7 @@ impl From<&Wallet> for WalletResponse {
         Self {
             id: w.id().to_string(),
             user_id: w.user_id().to_string(),
+            role: w.role().to_string(),
             active_balance: w.active_balance().cents(),
             held_balance: w.held_balance().cents(),
         }
@@ -173,6 +188,7 @@ impl From<&WalletTransaction> for WalletTransactionResponse {
         Self {
             id: tx.id.clone(),
             user_id: tx.user_id.clone(),
+            role: tx.role.clone(),
             transaction_type: tx.transaction_type.as_str().to_string(),
             amount: tx.amount.cents(),
             timestamp: tx.created_at.clone().unwrap_or_default(),
@@ -190,7 +206,7 @@ impl From<&crate::wallet::Hold> for HoldResponse {
             auction_id: h.auction_id.clone(),
             bid_id: h.bid_id.clone(),
             amount: h.amount as u64,
-            status: h.status.to_string(), // Menggunakan trait Display yang baru kita buat
+            status: h.status.to_string(), 
             expires_at: h.expires_at.clone(),
             created_at: h.created_at.clone(),
             updated_at: h.updated_at.clone(),
@@ -203,6 +219,7 @@ impl From<&PaymentIntent> for PaymentIntentResponse {
         Self {
             payment_id: payment.id.clone(),
             amount_cents: payment.amount_cents as u64,
+            role: payment.role.clone(),
             status: payment.status.clone(),
             redirect_url: payment.redirect_url.clone(),
             va_number: payment.va_number.clone(),
@@ -219,6 +236,7 @@ impl From<&WalletWithdrawal> for WithdrawalResponse {
         Self {
             withdrawal_id: withdrawal.id.clone(),
             amount_cents: withdrawal.amount_cents as u64,
+            role: withdrawal.role.clone(),
             status: withdrawal.status.clone(),
             bank_code: withdrawal.bank_code.clone(),
             account_number: withdrawal.account_number.clone(),

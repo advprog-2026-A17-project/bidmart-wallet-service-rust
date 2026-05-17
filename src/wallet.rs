@@ -147,7 +147,12 @@ pub struct WalletTransaction {
 }
 
 impl WalletTransaction {
-    pub fn new(user_id: &str, role: &str, transaction_type: TransactionType, amount: Money) -> Self {
+    pub fn new(
+        user_id: &str,
+        role: &str,
+        transaction_type: TransactionType,
+        amount: Money,
+    ) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             user_id: user_id.to_string(),

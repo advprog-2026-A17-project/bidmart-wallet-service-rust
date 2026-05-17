@@ -38,7 +38,9 @@ impl From<sqlx::Error> for ServiceError {
 impl std::fmt::Display for ServiceError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::WalletNotFound(uid, role) => write!(f, "wallet not found for user {uid} with role {role}"),
+            Self::WalletNotFound(uid, role) => {
+                write!(f, "wallet not found for user {uid} with role {role}")
+            }
             Self::Domain(e) => write!(f, "{e}"),
             Self::Persistence(e) => write!(f, "persistence error: {e}"),
             Self::TransactionNotFound(id) => write!(f, "transaction not found: {id}"),
@@ -138,7 +140,11 @@ impl WalletService {
 
     // ── Queries ──────────────────────────────────────────────────
 
-    pub async fn find_by_user_id_and_role(&self, user_id: &str, role: &str) -> Result<Wallet, ServiceError> {
+    pub async fn find_by_user_id_and_role(
+        &self,
+        user_id: &str,
+        role: &str,
+    ) -> Result<Wallet, ServiceError> {
         self.wallet_repo
             .find_by_user_id_and_role(user_id, role)
             .await?
@@ -161,7 +167,7 @@ impl WalletService {
         &self,
         user_id: &str,
     ) -> Result<Vec<PaymentIntent>, ServiceError> {
-        // NOTE: Currently filter by user_id across all roles for payment intent dashboard? 
+        // NOTE: Currently filter by user_id across all roles for payment intent dashboard?
         // Or should we also filter by role? User usually sees all pending payments.
         // Let's stick to user_id for now or update it if needed.
         let payments = self
@@ -198,7 +204,11 @@ impl WalletService {
     // ── Commands ─────────────────────────────────────────────────
 
     pub async fn create_wallet(&self, user_id: &str, role: &str) -> Result<Wallet, ServiceError> {
-        if let Ok(Some(existing)) = self.wallet_repo.find_by_user_id_and_role(user_id, role).await {
+        if let Ok(Some(existing)) = self
+            .wallet_repo
+            .find_by_user_id_and_role(user_id, role)
+            .await
+        {
             return Ok(existing);
         }
         let wallet = Wallet::new(user_id, role);
@@ -206,12 +216,24 @@ impl WalletService {
         Ok(wallet)
     }
 
-    pub async fn top_up(&self, user_id: &str, role: &str, amount: Money) -> Result<Wallet, ServiceError> {
-        self.mutate_wallet(user_id, role, |w| w.top_up(amount)).await
+    pub async fn top_up(
+        &self,
+        user_id: &str,
+        role: &str,
+        amount: Money,
+    ) -> Result<Wallet, ServiceError> {
+        self.mutate_wallet(user_id, role, |w| w.top_up(amount))
+            .await
     }
 
-    pub async fn withdraw(&self, user_id: &str, role: &str, amount: Money) -> Result<Wallet, ServiceError> {
-        self.mutate_wallet(user_id, role, |w| w.withdraw(amount)).await
+    pub async fn withdraw(
+        &self,
+        user_id: &str,
+        role: &str,
+        amount: Money,
+    ) -> Result<Wallet, ServiceError> {
+        self.mutate_wallet(user_id, role, |w| w.withdraw(amount))
+            .await
     }
 
     pub async fn create_top_up_intent(
@@ -404,14 +426,21 @@ impl WalletService {
         if withdrawal.status == "PENDING" {
             if normalized == "FAILED" || normalized == "EXPIRED" {
                 let amount = Money::from_cents(withdrawal.amount_cents as u64);
-                self.top_up(&withdrawal.user_id, &withdrawal.role, amount).await?;
+                self.top_up(&withdrawal.user_id, &withdrawal.role, amount)
+                    .await?;
                 let tx_type = if normalized == "FAILED" {
                     TransactionType::WithdrawFailed
                 } else {
                     TransactionType::WithdrawExpired
                 };
-                self.record_status_transaction(&withdrawal.user_id, &withdrawal.role, tx_type, amount, withdrawal_id)
-                    .await?;
+                self.record_status_transaction(
+                    &withdrawal.user_id,
+                    &withdrawal.role,
+                    tx_type,
+                    amount,
+                    withdrawal_id,
+                )
+                .await?;
             }
             self.wallet_repo
                 .update_withdrawal_status(withdrawal_id, &normalized)
@@ -424,23 +453,50 @@ impl WalletService {
             .ok_or_else(|| ServiceError::TransactionNotFound(withdrawal_id.to_string()))
     }
 
-    pub async fn hold(&self, user_id: &str, role: &str, amount: Money) -> Result<Wallet, ServiceError> {
+    pub async fn hold(
+        &self,
+        user_id: &str,
+        role: &str,
+        amount: Money,
+    ) -> Result<Wallet, ServiceError> {
         self.mutate_wallet(user_id, role, |w| w.hold(amount)).await
     }
 
-    pub async fn release(&self, user_id: &str, role: &str, amount: Money) -> Result<Wallet, ServiceError> {
-        self.mutate_wallet(user_id, role, |w| w.release(amount)).await
+    pub async fn release(
+        &self,
+        user_id: &str,
+        role: &str,
+        amount: Money,
+    ) -> Result<Wallet, ServiceError> {
+        self.mutate_wallet(user_id, role, |w| w.release(amount))
+            .await
     }
 
-    pub async fn convert(&self, user_id: &str, role: &str, amount: Money) -> Result<Wallet, ServiceError> {
-        self.mutate_wallet(user_id, role, |w| w.convert(amount)).await
+    pub async fn convert(
+        &self,
+        user_id: &str,
+        role: &str,
+        amount: Money,
+    ) -> Result<Wallet, ServiceError> {
+        self.mutate_wallet(user_id, role, |w| w.convert(amount))
+            .await
     }
 
-    pub async fn bid(&self, user_id: &str, role: &str, amount: Money) -> Result<Wallet, ServiceError> {
+    pub async fn bid(
+        &self,
+        user_id: &str,
+        role: &str,
+        amount: Money,
+    ) -> Result<Wallet, ServiceError> {
         self.mutate_wallet(user_id, role, |w| w.bid(amount)).await
     }
 
-    pub async fn cancel_bid(&self, user_id: &str, role: &str, bid_tx_id: &str) -> Result<(), ServiceError> {
+    pub async fn cancel_bid(
+        &self,
+        user_id: &str,
+        role: &str,
+        bid_tx_id: &str,
+    ) -> Result<(), ServiceError> {
         let tx = self
             .tx_repo
             .find_by_id(bid_tx_id)
@@ -506,7 +562,12 @@ impl WalletService {
         }
 
         // Provision BUYER wallet by default
-        if self.wallet_repo.find_by_user_id_and_role(user_id, "BUYER").await?.is_none() {
+        if self
+            .wallet_repo
+            .find_by_user_id_and_role(user_id, "BUYER")
+            .await?
+            .is_none()
+        {
             let wallet = Wallet::new(user_id, "BUYER");
             self.wallet_repo.insert(&wallet).await?;
         }

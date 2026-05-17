@@ -34,7 +34,7 @@ fn money_display_formats_correctly() {
 
 #[test]
 fn new_wallet_has_zero_balances() {
-    let w = Wallet::new("user-1");
+    let w = Wallet::new("user-1", "BUYER");
     assert_eq!(w.user_id(), "user-1");
     assert_eq!(w.active_balance(), Money::zero());
     assert_eq!(w.held_balance(), Money::zero());
@@ -45,7 +45,7 @@ fn new_wallet_has_zero_balances() {
 
 #[test]
 fn top_up_increases_active_balance() {
-    let mut w = Wallet::new("user-1");
+    let mut w = Wallet::new("user-1", "BUYER");
     let tx = w.top_up(Money::from_cents(5000)).unwrap();
     assert_eq!(w.active_balance(), Money::from_cents(5000));
     assert_eq!(tx.transaction_type, TransactionType::TopUp);
@@ -54,7 +54,7 @@ fn top_up_increases_active_balance() {
 
 #[test]
 fn top_up_zero_amount_fails() {
-    let mut w = Wallet::new("user-1");
+    let mut w = Wallet::new("user-1", "BUYER");
     let result = w.top_up(Money::zero());
     assert_eq!(result, Err(WalletError::InvalidAmount));
 }
@@ -63,7 +63,7 @@ fn top_up_zero_amount_fails() {
 
 #[test]
 fn withdraw_decreases_active_balance() {
-    let mut w = Wallet::new("user-1");
+    let mut w = Wallet::new("user-1", "BUYER");
     w.top_up(Money::from_cents(10000)).unwrap();
     let tx = w.withdraw(Money::from_cents(3000)).unwrap();
     assert_eq!(w.active_balance(), Money::from_cents(7000));
@@ -72,7 +72,7 @@ fn withdraw_decreases_active_balance() {
 
 #[test]
 fn withdraw_more_than_active_balance_fails() {
-    let mut w = Wallet::new("user-1");
+    let mut w = Wallet::new("user-1", "BUYER");
     w.top_up(Money::from_cents(1000)).unwrap();
     let result = w.withdraw(Money::from_cents(2000));
     assert_eq!(result, Err(WalletError::InsufficientActiveBalance));
@@ -80,7 +80,7 @@ fn withdraw_more_than_active_balance_fails() {
 
 #[test]
 fn withdraw_zero_fails() {
-    let mut w = Wallet::new("user-1");
+    let mut w = Wallet::new("user-1", "BUYER");
     let result = w.withdraw(Money::zero());
     assert_eq!(result, Err(WalletError::InvalidAmount));
 }
@@ -89,7 +89,7 @@ fn withdraw_zero_fails() {
 
 #[test]
 fn hold_moves_from_active_to_held() {
-    let mut w = Wallet::new("user-1");
+    let mut w = Wallet::new("user-1", "BUYER");
     w.top_up(Money::from_cents(10000)).unwrap();
     let tx = w.hold(Money::from_cents(3000)).unwrap();
     assert_eq!(w.active_balance(), Money::from_cents(7000));
@@ -99,7 +99,7 @@ fn hold_moves_from_active_to_held() {
 
 #[test]
 fn hold_more_than_active_balance_fails() {
-    let mut w = Wallet::new("user-1");
+    let mut w = Wallet::new("user-1", "BUYER");
     w.top_up(Money::from_cents(1000)).unwrap();
     let result = w.hold(Money::from_cents(2000));
     assert_eq!(result, Err(WalletError::InsufficientActiveBalance));
@@ -107,7 +107,7 @@ fn hold_more_than_active_balance_fails() {
 
 #[test]
 fn hold_zero_fails() {
-    let mut w = Wallet::new("user-1");
+    let mut w = Wallet::new("user-1", "BUYER");
     let result = w.hold(Money::zero());
     assert_eq!(result, Err(WalletError::InvalidAmount));
 }
@@ -116,7 +116,7 @@ fn hold_zero_fails() {
 
 #[test]
 fn release_moves_from_held_to_active() {
-    let mut w = Wallet::new("user-1");
+    let mut w = Wallet::new("user-1", "BUYER");
     w.top_up(Money::from_cents(10000)).unwrap();
     w.hold(Money::from_cents(5000)).unwrap();
     let tx = w.release(Money::from_cents(3000)).unwrap();
@@ -127,7 +127,7 @@ fn release_moves_from_held_to_active() {
 
 #[test]
 fn release_more_than_held_balance_fails() {
-    let mut w = Wallet::new("user-1");
+    let mut w = Wallet::new("user-1", "BUYER");
     w.top_up(Money::from_cents(5000)).unwrap();
     w.hold(Money::from_cents(2000)).unwrap();
     let result = w.release(Money::from_cents(3000));
@@ -136,7 +136,7 @@ fn release_more_than_held_balance_fails() {
 
 #[test]
 fn release_zero_fails() {
-    let mut w = Wallet::new("user-1");
+    let mut w = Wallet::new("user-1", "BUYER");
     let result = w.release(Money::zero());
     assert_eq!(result, Err(WalletError::InvalidAmount));
 }
@@ -145,7 +145,7 @@ fn release_zero_fails() {
 
 #[test]
 fn convert_removes_from_held_balance() {
-    let mut w = Wallet::new("user-1");
+    let mut w = Wallet::new("user-1", "BUYER");
     w.top_up(Money::from_cents(10000)).unwrap();
     w.hold(Money::from_cents(5000)).unwrap();
     let tx = w.convert(Money::from_cents(5000)).unwrap();
@@ -156,7 +156,7 @@ fn convert_removes_from_held_balance() {
 
 #[test]
 fn convert_more_than_held_balance_fails() {
-    let mut w = Wallet::new("user-1");
+    let mut w = Wallet::new("user-1", "BUYER");
     w.top_up(Money::from_cents(5000)).unwrap();
     w.hold(Money::from_cents(2000)).unwrap();
     let result = w.convert(Money::from_cents(3000));
@@ -165,7 +165,7 @@ fn convert_more_than_held_balance_fails() {
 
 #[test]
 fn convert_zero_fails() {
-    let mut w = Wallet::new("user-1");
+    let mut w = Wallet::new("user-1", "BUYER");
     let result = w.convert(Money::zero());
     assert_eq!(result, Err(WalletError::InvalidAmount));
 }
@@ -174,7 +174,7 @@ fn convert_zero_fails() {
 
 #[test]
 fn bid_moves_from_active_to_held() {
-    let mut w = Wallet::new("user-1");
+    let mut w = Wallet::new("user-1", "BUYER");
     w.top_up(Money::from_cents(10000)).unwrap();
     let tx = w.bid(Money::from_cents(4000)).unwrap();
     assert_eq!(w.active_balance(), Money::from_cents(6000));
@@ -184,7 +184,7 @@ fn bid_moves_from_active_to_held() {
 
 #[test]
 fn bid_insufficient_balance_fails() {
-    let mut w = Wallet::new("user-1");
+    let mut w = Wallet::new("user-1", "BUYER");
     let result = w.bid(Money::from_cents(1000));
     assert_eq!(result, Err(WalletError::InsufficientActiveBalance));
 }
@@ -213,7 +213,12 @@ fn transaction_type_display() {
 
 #[test]
 fn wallet_transaction_captures_user_and_amount() {
-    let tx = WalletTransaction::new("user-1", TransactionType::TopUp, Money::from_cents(500));
+    let tx = WalletTransaction::new(
+        "user-1",
+        "BUYER",
+        TransactionType::TopUp,
+        Money::from_cents(500),
+    );
     assert_eq!(tx.user_id, "user-1");
     assert_eq!(tx.transaction_type, TransactionType::TopUp);
     assert_eq!(tx.amount, Money::from_cents(500));

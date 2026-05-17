@@ -21,7 +21,10 @@ async fn provision_wallet_creates_wallet_for_new_user() {
         .await
         .unwrap();
 
-    let wallet = svc.find_by_user_id("user-1").await.unwrap();
+    let wallet = svc
+        .find_by_user_id_and_role("user-1", "BUYER")
+        .await
+        .unwrap();
     assert_eq!(wallet.user_id(), "user-1");
     assert_eq!(wallet.active_balance(), Money::zero());
 }
@@ -48,7 +51,7 @@ async fn provision_wallet_skips_if_wallet_already_exists() {
     let svc = setup_service().await;
 
     // Manually create wallet first
-    svc.create_wallet("user-1").await.unwrap();
+    svc.create_wallet("user-1", "BUYER").await.unwrap();
 
     // Provisioning with a new event should not create a duplicate
     svc.provision_wallet("evt-1", "user-1", "user@example.com", "auth-service")

@@ -206,7 +206,7 @@ impl From<&crate::wallet::Hold> for HoldResponse {
             auction_id: h.auction_id.clone(),
             bid_id: h.bid_id.clone(),
             amount: h.amount as u64,
-            status: h.status.to_string(), 
+            status: h.status.to_string(),
             expires_at: h.expires_at.clone(),
             created_at: h.created_at.clone(),
             updated_at: h.updated_at.clone(),

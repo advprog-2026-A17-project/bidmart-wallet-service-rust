@@ -114,7 +114,10 @@ async fn top_up(
     Query(q): Query<AmountQuery>,
 ) -> impl IntoResponse {
     let role = q.role.as_deref().unwrap_or("BUYER");
-    match svc.top_up(&user_id, role, Money::from_cents(q.amount)).await {
+    match svc
+        .top_up(&user_id, role, Money::from_cents(q.amount))
+        .await
+    {
         Ok(w) => Ok(Json(WalletResponse::from(&w))),
         Err(e) => Err(map_error(e)),
     }
@@ -244,7 +247,10 @@ async fn withdraw(
     Query(q): Query<AmountQuery>,
 ) -> impl IntoResponse {
     let role = q.role.as_deref().unwrap_or("BUYER");
-    match svc.withdraw(&user_id, role, Money::from_cents(q.amount)).await {
+    match svc
+        .withdraw(&user_id, role, Money::from_cents(q.amount))
+        .await
+    {
         Ok(w) => Ok(Json(WalletResponse::from(&w))),
         Err(e) => Err(map_error(e)),
     }

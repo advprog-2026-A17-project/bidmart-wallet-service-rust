@@ -22,6 +22,8 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run Tests
+        env:
+          MIDTRANS_SERVER_KEY: SB-Mid-server-local
         run: cargo test --locked
 
   sonarcloud:

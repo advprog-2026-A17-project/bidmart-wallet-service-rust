@@ -356,7 +356,7 @@ impl WalletRepository {
     ) -> Result<PaymentIntent, sqlx::Error> {
         let now = chrono::Utc::now().to_rfc3339();
         sqlx::query(
-            "INSERT INTO wallet_payment_intents (id, user_id, role, amount_cents, status, redirect_url, va_number, payment_channel, created_at, updated_at) VALUES ($1, $2, $3, $4, 'PENDING', $5, $6, $7, $8, $9, $9)",
+            "INSERT INTO wallet_payment_intents (id, user_id, role, amount_cents, status, redirect_url, va_number, payment_channel, created_at, updated_at) VALUES ($1, $2, $3, $4, 'PENDING', $5, $6, $7, $8, $8)",
         )
         .bind(payment_id)
         .bind(user_id)

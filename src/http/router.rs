@@ -23,6 +23,7 @@ pub fn create_router(service: WalletService) -> Router {
         .route("/hold", post(hold_funds))
         .route("/release", post(release_funds))
         .route("/convert", post(convert_funds))
+        .route("/payout", post(payout_seller))
         .route("/:userId", get(get_wallet))
         .route("/:userId/detail", get(get_wallet_detail))
         .route("/:userId/payments/:paymentId", get(get_payment_intent))
@@ -246,6 +247,19 @@ async fn convert_funds(
     require_internal_token(&headers)?;
     match svc.convert_funds(&req.hold_id).await {
         Ok(hold) => Ok(Json(HoldResponse::from(&hold))),
+        Err(e) => Err(map_error(e)),
+    }
+}
+
+async fn payout_seller(
+    State(svc): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<PayoutSellerRequest>,
+) -> impl IntoResponse {
+    require_internal_token(&headers)?;
+    let amount = Money::from_cents(req.amount_cents);
+    match svc.payout_to_seller(&req.seller_id, amount).await {
+        Ok(wallet) => Ok(Json(WalletResponse::from(&wallet))),
         Err(e) => Err(map_error(e)),
     }
 }

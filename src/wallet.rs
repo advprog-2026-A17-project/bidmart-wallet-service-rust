@@ -67,6 +67,7 @@ pub enum TransactionType {
     Hold,
     Release,
     Convert,
+    Payout,
     Bid,
     CancelBid,
     TopUpFailed,
@@ -83,6 +84,7 @@ impl TransactionType {
             Self::Hold => "HOLD",
             Self::Release => "RELEASE",
             Self::Convert => "CONVERT",
+            Self::Payout => "PAYOUT",
             Self::Bid => "BID",
             Self::CancelBid => "CANCEL_BID",
             Self::TopUpFailed => "TOP_UP_FAILED",
@@ -102,6 +104,7 @@ impl TransactionType {
             "HOLD" => Self::Hold,
             "RELEASE" => Self::Release,
             "CONVERT" => Self::Convert,
+            "PAYOUT" => Self::Payout,
             "BID" => Self::Bid,
             "CANCEL_BID" => Self::CancelBid,
             "TOP_UP_FAILED" => Self::TopUpFailed,
@@ -277,6 +280,12 @@ impl Wallet {
         self.require_held_balance(amount)?;
         self.held_balance = self.held_balance - amount;
         Ok(self.record(TransactionType::Convert, amount))
+    }
+
+    pub fn payout(&mut self, amount: Money) -> Result<WalletTransaction, WalletError> {
+        Self::validate_positive(amount)?;
+        self.active_balance = self.active_balance + amount;
+        Ok(self.record(TransactionType::Payout, amount))
     }
 
     pub fn bid(&mut self, amount: Money) -> Result<WalletTransaction, WalletError> {

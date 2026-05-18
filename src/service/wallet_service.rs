@@ -546,6 +546,25 @@ impl WalletService {
             .map_err(|e| ServiceError::HoldFailed(e))
     }
 
+    pub async fn payout_to_seller(
+        &self,
+        seller_id: &str,
+        amount: Money,
+    ) -> Result<Wallet, ServiceError> {
+        if self
+            .wallet_repo
+            .find_by_user_id_and_role(seller_id, "SELLER")
+            .await?
+            .is_none()
+        {
+            let wallet = Wallet::new(seller_id, "SELLER");
+            self.wallet_repo.insert(&wallet).await?;
+        }
+
+        self.mutate_wallet(seller_id, "SELLER", |w| w.payout(amount))
+            .await
+    }
+
     // ── Provisioning ─────────────────────────────────────────────
 
     /// Provision a wallet from an external auth event. Idempotent by event_id.

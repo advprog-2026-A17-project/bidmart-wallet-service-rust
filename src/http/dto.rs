@@ -38,6 +38,14 @@ pub struct ConvertFundsRequest {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PayoutSellerRequest {
+    pub seller_id: String,
+    pub amount_cents: u64,
+    pub order_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct AmountQuery {
     pub amount: u64,
     pub role: Option<String>,

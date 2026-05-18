@@ -1,4 +1,6 @@
 use std::sync::Arc;
+use std::sync::OnceLock;
+use std::time::Instant;
 
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -41,7 +43,26 @@ pub fn create_router(service: WalletService) -> Router {
         )
         .with_state(state);
 
-    Router::new().nest("/api/v1/wallet", wallet_routes)
+    Router::new()
+        .route("/metrics", get(metrics))
+        .nest("/api/v1/wallet", wallet_routes)
+}
+
+async fn metrics() -> impl IntoResponse {
+    static STARTED_AT: OnceLock<Instant> = OnceLock::new();
+    let uptime_seconds = STARTED_AT.get_or_init(Instant::now).elapsed().as_secs_f64();
+
+    (
+        [("content-type", "text/plain; version=0.0.4; charset=utf-8")],
+        format!(
+            "# HELP bidmart_service_up Service availability gauge\n\
+             # TYPE bidmart_service_up gauge\n\
+             bidmart_service_up{{service=\"wallet\"}} 1\n\
+             # HELP bidmart_service_uptime_seconds Service uptime in seconds\n\
+             # TYPE bidmart_service_uptime_seconds gauge\n\
+             bidmart_service_uptime_seconds{{service=\"wallet\"}} {uptime_seconds}\n"
+        ),
+    )
 }
 
 // ── Handlers ────────────────────────────────────────────────────

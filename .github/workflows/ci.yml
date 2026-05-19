@@ -24,7 +24,14 @@ jobs:
       - name: Run Tests
         env:
           MIDTRANS_SERVER_KEY: SB-Mid-server-local
-        run: cargo test --locked
+        run: cargo test --locked -- --nocapture 2>&1 | tee test-output.log
+
+      - name: Upload Rust Test Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wallet-service-test-log
+          path: test-output.log
 
   sonarcloud:
     name: SonarCloud Code Analysis

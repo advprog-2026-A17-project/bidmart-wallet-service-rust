@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package wallet.v1;
+
+option java_multiple_files = true;
+option java_package = "id.ac.ui.cs.advprog.bidmartwallet.grpc";
+option java_outer_classname = "WalletProto";
+
+service WalletService {
+  rpc HoldFunds(GrpcHoldFundsRequest) returns (GrpcHoldFundsResponse);
+  rpc ReleaseHold(GrpcReleaseFundsRequest) returns (GrpcEmptyResponse);
+  rpc ConvertHoldToPayment(GrpcConvertFundsRequest) returns (GrpcEmptyResponse);
+}
+
+message GrpcHoldFundsRequest {
+  string user_id = 1;
+  optional string role = 2;
+  string hold_id = 3;
+  string auction_id = 4;
+  string bid_id = 5;
+  uint64 amount = 6;
+  string expires_at = 7;
+}
+
+message GrpcHoldFundsResponse {
+  string id = 1;
+  string status = 2;
+  uint64 amount = 3;
+}
+
+message GrpcReleaseFundsRequest {
+  string hold_id = 1;
+}
+
+message GrpcConvertFundsRequest {
+  string hold_id = 1;
+}
+
+message GrpcEmptyResponse {}

@@ -1,0 +1,599 @@
+openapi: 3.0.3
+info:
+  title: BidMart Wallet Service API (Rust)
+  version: 1.0.0
+servers:
+  - url: http://localhost:8000/api/v1/wallet
+tags:
+  - name: wallets
+  - name: payments
+  - name: holds
+paths:
+  /add:
+    post:
+      tags: [wallets]
+      summary: Create wallet
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WalletCreateRequest"
+      responses:
+        "200":
+          description: Wallet created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WalletResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StructuredErrorResponse"
+  /{userId}:
+    get:
+      tags: [wallets]
+      summary: Get wallet
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+        - $ref: "#/components/parameters/RoleQuery"
+      responses:
+        "200":
+          description: Wallet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WalletResponse"
+        "404":
+          description: Wallet not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StructuredErrorResponse"
+  /{userId}/detail:
+    get:
+      tags: [wallets]
+      summary: Get wallet detail
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+        - $ref: "#/components/parameters/RoleQuery"
+      responses:
+        "200":
+          description: Wallet detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WalletDetailResponse"
+  /{userId}/payments/{paymentId}:
+    get:
+      tags: [payments]
+      summary: Get payment intent
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+        - $ref: "#/components/parameters/PaymentId"
+      responses:
+        "200":
+          description: Payment intent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentIntentResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StructuredErrorResponse"
+  /{userId}/top-up:
+    post:
+      tags: [payments]
+      summary: Top up wallet
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+        - $ref: "#/components/parameters/AmountQuery"
+      responses:
+        "200":
+          description: Updated wallet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WalletResponse"
+  /{userId}/top-up/intent:
+    post:
+      tags: [payments]
+      summary: Create top-up payment intent
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentIntentRequest"
+      responses:
+        "201":
+          description: Payment intent created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentIntentResponse"
+  /{userId}/withdraw:
+    post:
+      tags: [payments]
+      summary: Withdraw from wallet
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+        - $ref: "#/components/parameters/AmountQuery"
+      responses:
+        "200":
+          description: Updated wallet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WalletResponse"
+  /{userId}/withdrawals:
+    post:
+      tags: [payments]
+      summary: Create withdrawal
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WithdrawalRequest"
+      responses:
+        "201":
+          description: Withdrawal created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WithdrawalResponse"
+  /{userId}/trybid:
+    post:
+      tags: [wallets]
+      summary: Try bid (deduct active balance)
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+        - $ref: "#/components/parameters/AmountQuery"
+      responses:
+        "200":
+          description: Updated wallet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WalletResponse"
+  /hold:
+    post:
+      tags: [holds]
+      summary: Hold funds (internal)
+      parameters:
+        - $ref: "#/components/parameters/XInternalServiceToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HoldFundsRequest"
+      responses:
+        "200":
+          description: Hold created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HoldResponse"
+        "403":
+          description: Invalid internal service token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StructuredErrorResponse"
+  /release:
+    post:
+      tags: [holds]
+      summary: Release held funds (internal)
+      parameters:
+        - $ref: "#/components/parameters/XInternalServiceToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReleaseFundsRequest"
+      responses:
+        "200":
+          description: Hold released
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HoldResponse"
+  /convert:
+    post:
+      tags: [holds]
+      summary: Convert hold to active funds (internal)
+      parameters:
+        - $ref: "#/components/parameters/XInternalServiceToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConvertFundsRequest"
+      responses:
+        "200":
+          description: Hold converted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HoldResponse"
+  /payout:
+    post:
+      tags: [wallets]
+      summary: Payout seller (internal)
+      parameters:
+        - $ref: "#/components/parameters/XInternalServiceToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PayoutSellerRequest"
+      responses:
+        "200":
+          description: Updated wallet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WalletResponse"
+  /midtrans/payments/{paymentId}/simulate:
+    post:
+      tags: [payments]
+      summary: Simulate payment status (Midtrans)
+      parameters:
+        - $ref: "#/components/parameters/PaymentId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MidtransSimulationRequest"
+      responses:
+        "200":
+          description: Updated payment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentIntentResponse"
+  /midtrans/payments/{paymentId}/sync:
+    post:
+      tags: [payments]
+      summary: Sync payment status (Midtrans)
+      parameters:
+        - $ref: "#/components/parameters/PaymentId"
+      responses:
+        "200":
+          description: Updated payment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentIntentResponse"
+  /midtrans/payments/return:
+    post:
+      tags: [payments]
+      summary: Handle payment return callback (Midtrans)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MidtransPaymentReturnRequest"
+      responses:
+        "200":
+          description: Updated payment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentIntentResponse"
+  /midtrans/withdrawals/{withdrawalId}/simulate:
+    post:
+      tags: [payments]
+      summary: Simulate withdrawal status (Midtrans)
+      parameters:
+        - $ref: "#/components/parameters/WithdrawalId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MidtransSimulationRequest"
+      responses:
+        "200":
+          description: Updated withdrawal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WithdrawalResponse"
+components:
+  parameters:
+    UserId:
+      in: path
+      name: userId
+      required: true
+      schema:
+        type: string
+    PaymentId:
+      in: path
+      name: paymentId
+      required: true
+      schema:
+        type: string
+    WithdrawalId:
+      in: path
+      name: withdrawalId
+      required: true
+      schema:
+        type: string
+    XInternalServiceToken:
+      in: header
+      name: X-Internal-Service-Token
+      required: true
+      schema:
+        type: string
+    RoleQuery:
+      in: query
+      name: role
+      required: false
+      schema:
+        type: string
+    AmountQuery:
+      in: query
+      name: amount
+      required: true
+      schema:
+        type: integer
+        format: int64
+      description: Amount in cents
+  schemas:
+    WalletCreateRequest:
+      type: object
+      properties:
+        userId:
+          type: string
+        role:
+          type: string
+          nullable: true
+        activeBalance:
+          type: integer
+          format: int64
+          nullable: true
+        heldBalance:
+          type: integer
+          format: int64
+          nullable: true
+      required: [userId]
+    HoldFundsRequest:
+      type: object
+      properties:
+        userId:
+          type: string
+        role:
+          type: string
+          nullable: true
+        holdId:
+          type: string
+        auctionId:
+          type: string
+        bidId:
+          type: string
+        amount:
+          type: integer
+          format: int64
+        expiresAt:
+          type: string
+      required: [userId, holdId, auctionId, bidId, amount, expiresAt]
+    ReleaseFundsRequest:
+      type: object
+      properties:
+        holdId:
+          type: string
+      required: [holdId]
+    ConvertFundsRequest:
+      type: object
+      properties:
+        holdId:
+          type: string
+      required: [holdId]
+    PayoutSellerRequest:
+      type: object
+      properties:
+        sellerId:
+          type: string
+        amountCents:
+          type: integer
+          format: int64
+        orderId:
+          type: string
+          nullable: true
+      required: [sellerId, amountCents]
+    PaymentIntentRequest:
+      type: object
+      properties:
+        amountCents:
+          type: integer
+          format: int64
+        role:
+          type: string
+          nullable: true
+        paymentMethod:
+          type: string
+          nullable: true
+      required: [amountCents]
+    WithdrawalRequest:
+      type: object
+      properties:
+        amountCents:
+          type: integer
+          format: int64
+        role:
+          type: string
+          nullable: true
+        bankCode:
+          type: string
+        accountNumber:
+          type: string
+      required: [amountCents, bankCode, accountNumber]
+    MidtransSimulationRequest:
+      type: object
+      properties:
+        status:
+          type: string
+      required: [status]
+    MidtransPaymentReturnRequest:
+      type: object
+      properties:
+        order_id:
+          type: string
+        transaction_status:
+          type: string
+        status_code:
+          type: string
+          nullable: true
+      required: [order_id, transaction_status]
+    WalletResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        userId:
+          type: string
+        role:
+          type: string
+        activeBalance:
+          type: integer
+          format: int64
+        heldBalance:
+          type: integer
+          format: int64
+      required: [id, userId, role, activeBalance, heldBalance]
+    WalletTransactionResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        userId:
+          type: string
+        role:
+          type: string
+        type:
+          type: string
+        amount:
+          type: integer
+          format: int64
+        timestamp:
+          type: string
+        correlationId:
+          type: string
+          nullable: true
+        sourceService:
+          type: string
+          nullable: true
+      required: [id, userId, role, type, amount, timestamp]
+    WalletDetailResponse:
+      type: object
+      properties:
+        wallet:
+          $ref: "#/components/schemas/WalletResponse"
+        history:
+          type: array
+          items:
+            $ref: "#/components/schemas/WalletTransactionResponse"
+        unpaidPayments:
+          type: array
+          items:
+            $ref: "#/components/schemas/PaymentIntentResponse"
+      required: [wallet, history, unpaidPayments]
+    HoldResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        walletId:
+          type: string
+        auctionId:
+          type: string
+        bidId:
+          type: string
+        amount:
+          type: integer
+          format: int64
+        status:
+          type: string
+        expiresAt:
+          type: string
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+      required: [id, walletId, auctionId, bidId, amount, status, expiresAt, createdAt, updatedAt]
+    PaymentIntentResponse:
+      type: object
+      properties:
+        paymentId:
+          type: string
+        amountCents:
+          type: integer
+          format: int64
+        role:
+          type: string
+        status:
+          type: string
+        redirectUrl:
+          type: string
+        vaNumber:
+          type: string
+          nullable: true
+        paymentChannel:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+        expiresAt:
+          type: string
+      required: [paymentId, amountCents, role, status, redirectUrl, createdAt, updatedAt, expiresAt]
+    WithdrawalResponse:
+      type: object
+      properties:
+        withdrawalId:
+          type: string
+        amountCents:
+          type: integer
+          format: int64
+        role:
+          type: string
+        status:
+          type: string
+        bankCode:
+          type: string
+          nullable: true
+        accountNumber:
+          type: string
+          nullable: true
+        accountName:
+          type: string
+          nullable: true
+        payoutReference:
+          type: string
+          nullable: true
+      required: [withdrawalId, amountCents, role, status]
+    StructuredErrorResponse:
+      type: object
+      properties:
+        error_code:
+          type: string
+        message:
+          type: string

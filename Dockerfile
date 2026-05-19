@@ -2,9 +2,13 @@ FROM rust:1.88-bookworm AS builder
 
 WORKDIR /app
 
+RUN apt-get update && apt-get install -y protobuf-compiler
+
 COPY Cargo.toml Cargo.lock ./
 COPY src src
 COPY migrations migrations
+COPY proto proto
+COPY build.rs build.rs
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \

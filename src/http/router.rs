@@ -13,7 +13,7 @@ use crate::service::wallet_service::{ServiceError, WalletService};
 use crate::wallet::{Money, WalletError};
 
 type AppState = Arc<WalletService>;
-const DEFAULT_INTERNAL_TOKEN: &str = "local-dev-internal-token";
+const DEFAULT_INTERNAL_TOKEN: &str = "bidmart-local-internal-token";
 
 pub fn create_router(service: WalletService) -> Router {
     let state: AppState = Arc::new(service);
@@ -23,6 +23,7 @@ pub fn create_router(service: WalletService) -> Router {
         .route("/hold", post(hold_funds))
         .route("/release", post(release_funds))
         .route("/convert", post(convert_funds))
+        .route("/seller-escrow", post(credit_seller_escrow))
         .route("/payout", post(payout_seller))
         .route("/:userId", get(get_wallet))
         .route("/:userId/detail", get(get_wallet_detail))
@@ -251,6 +252,19 @@ async fn convert_funds(
     }
 }
 
+async fn credit_seller_escrow(
+    State(svc): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<SellerEscrowRequest>,
+) -> impl IntoResponse {
+    require_internal_token(&headers)?;
+    let amount = Money::from_cents(req.amount_cents);
+    match svc.credit_seller_escrow(&req.seller_id, amount).await {
+        Ok(wallet) => Ok(Json(WalletResponse::from(&wallet))),
+        Err(e) => Err(map_error(e)),
+    }
+}
+
 async fn payout_seller(
     State(svc): State<AppState>,
     headers: HeaderMap,
@@ -258,7 +272,7 @@ async fn payout_seller(
 ) -> impl IntoResponse {
     require_internal_token(&headers)?;
     let amount = Money::from_cents(req.amount_cents);
-    match svc.payout_to_seller(&req.seller_id, amount).await {
+    match svc.settle_seller_escrow(&req.seller_id, amount).await {
         Ok(wallet) => Ok(Json(WalletResponse::from(&wallet))),
         Err(e) => Err(map_error(e)),
     }
@@ -380,6 +394,8 @@ fn map_error(e: ServiceError) -> (StatusCode, Json<StructuredErrorResponse>) {
         ServiceError::HoldFailed(msg) => {
             let code = if msg.contains("Insufficient active balance") {
                 "INSUFFICIENT_ACTIVE_BALANCE"
+            } else if msg.contains("HOLD_NOT_ACTIVE") {
+                "HOLD_NOT_ACTIVE"
             } else {
                 "HOLD_OPERATION_FAILED"
             };

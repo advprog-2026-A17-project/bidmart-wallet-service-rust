@@ -74,7 +74,7 @@ async fn get_wallet(
     Query(q): Query<RoleQuery>,
 ) -> impl IntoResponse {
     let role = q.role.as_deref().unwrap_or("BUYER");
-    match svc.find_by_user_id_and_role(&user_id, role).await {
+    match svc.ensure_wallet(&user_id, role).await {
         Ok(w) => Ok(Json(WalletResponse::from(&w))),
         Err(e) => Err(map_error(e)),
     }
@@ -86,7 +86,7 @@ async fn get_wallet_detail(
     Query(q): Query<RoleQuery>,
 ) -> impl IntoResponse {
     let role = q.role.as_deref().unwrap_or("BUYER");
-    let wallet = match svc.find_by_user_id_and_role(&user_id, role).await {
+    let wallet = match svc.ensure_wallet(&user_id, role).await {
         Ok(w) => w,
         Err(e) => return Err(map_error(e)),
     };

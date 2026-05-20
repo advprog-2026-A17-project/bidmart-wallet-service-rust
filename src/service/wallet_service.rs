@@ -526,7 +526,7 @@ impl WalletService {
             .map_err(|e| ServiceError::HoldFailed(e))
     }
 
-    pub async fn payout_to_seller(
+    pub async fn credit_seller_escrow(
         &self,
         seller_id: &str,
         amount: Money,
@@ -541,8 +541,38 @@ impl WalletService {
             self.wallet_repo.insert(&wallet).await?;
         }
 
-        self.mutate_wallet(seller_id, "SELLER", |w| w.payout(amount))
+        self.mutate_wallet(seller_id, "SELLER", |w| w.credit_seller_escrow(amount))
             .await
+    }
+
+    /// Settles pending sale proceeds from held to active (used after order confirmation).
+    pub async fn settle_seller_escrow(
+        &self,
+        seller_id: &str,
+        amount: Money,
+    ) -> Result<Wallet, ServiceError> {
+        if self
+            .wallet_repo
+            .find_by_user_id_and_role(seller_id, "SELLER")
+            .await?
+            .is_none()
+        {
+            return Err(ServiceError::WalletNotFound(
+                seller_id.to_string(),
+                "SELLER".to_string(),
+            ));
+        }
+
+        self.mutate_wallet(seller_id, "SELLER", |w| w.settle_seller_escrow(amount))
+            .await
+    }
+
+    pub async fn payout_to_seller(
+        &self,
+        seller_id: &str,
+        amount: Money,
+    ) -> Result<Wallet, ServiceError> {
+        self.settle_seller_escrow(seller_id, amount).await
     }
 
     // ── Provisioning ─────────────────────────────────────────────

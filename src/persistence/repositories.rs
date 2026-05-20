@@ -277,7 +277,10 @@ impl WalletRepository {
         let mut hold = Hold::try_from(hold_row)?;
 
         if hold.status != HoldStatus::Active {
-            return Ok(hold);
+            return Err(format!(
+                "HOLD_NOT_ACTIVE: hold {} is {:?}, expected ACTIVE for convert",
+                hold_id, hold.status
+            ));
         }
 
         let wallet_sql = format!("SELECT {WALLET_COLS} FROM wallets WHERE id = $1");

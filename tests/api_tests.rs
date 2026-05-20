@@ -687,6 +687,22 @@ async fn trybid_returns_updated_balances() {
 // ── GET /api/v1/wallet/{userId}/detail ───────────────────────────
 
 #[tokio::test]
+async fn get_wallet_detail_auto_creates_wallet_when_missing() {
+    let app = setup_app().await;
+
+    let req = Request::builder()
+        .uri("/api/v1/wallet/user-auto/detail?role=BUYER")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let json = body_to_json(resp.into_body()).await;
+    assert_eq!(json["wallet"]["userId"], "user-auto");
+    assert_eq!(json["wallet"]["role"], "BUYER");
+}
+
+#[tokio::test]
 async fn get_wallet_detail_includes_history() {
     let app = setup_app().await;
 

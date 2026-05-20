@@ -164,6 +164,11 @@ impl WalletService {
         Ok(wallet)
     }
 
+    /// Returns an existing wallet or creates one for the user's marketplace role.
+    pub async fn ensure_wallet(&self, user_id: &str, role: &str) -> Result<Wallet, ServiceError> {
+        self.create_wallet(user_id, role).await
+    }
+
     pub async fn top_up(
         &self,
         user_id: &str,
@@ -548,19 +553,26 @@ impl WalletService {
         event_id: &str,
         user_id: &str,
         email: &str,
+        role: &str,
         source: &str,
     ) -> Result<(), ServiceError> {
         if self.prov_repo.exists(event_id).await? {
             return Ok(());
         }
 
+        let wallet_role = if role.eq_ignore_ascii_case("SELLER") {
+            "SELLER"
+        } else {
+            "BUYER"
+        };
+
         if self
             .wallet_repo
-            .find_by_user_id_and_role(user_id, "BUYER")
+            .find_by_user_id_and_role(user_id, wallet_role)
             .await?
             .is_none()
         {
-            let wallet = Wallet::new(user_id, "BUYER");
+            let wallet = Wallet::new(user_id, wallet_role);
             self.wallet_repo.insert(&wallet).await?;
         }
 

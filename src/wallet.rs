@@ -167,6 +167,73 @@ impl WalletTransaction {
             source_service: None,
         }
     }
+
+    /// Entry point for the Builder Pattern — use when optional fields need to be set.
+    pub fn builder(
+        user_id: &str,
+        role: &str,
+        transaction_type: TransactionType,
+        amount: Money,
+    ) -> WalletTransactionBuilder {
+        WalletTransactionBuilder::new(user_id, role, transaction_type, amount)
+    }
+}
+
+// ── WalletTransactionBuilder ─────────────────────────────────────
+
+/// Builder for `WalletTransaction`. Required fields are given at construction;
+/// optional fields (`correlation_id`, `source_service`) are set via method chaining.
+pub struct WalletTransactionBuilder {
+    user_id: String,
+    role: String,
+    transaction_type: TransactionType,
+    amount: Money,
+    correlation_id: Option<String>,
+    source_service: Option<String>,
+}
+
+impl WalletTransactionBuilder {
+    fn new(
+        user_id: &str,
+        role: &str,
+        transaction_type: TransactionType,
+        amount: Money,
+    ) -> Self {
+        Self {
+            user_id: user_id.to_string(),
+            role: role.to_string(),
+            transaction_type,
+            amount,
+            correlation_id: None,
+            source_service: None,
+        }
+    }
+
+    /// Associates this transaction with an external ID (e.g. a payment intent ID).
+    pub fn correlation_id(mut self, id: &str) -> Self {
+        self.correlation_id = Some(id.to_string());
+        self
+    }
+
+    /// Tags the originating service for this transaction (e.g. `"midtrans"`).
+    pub fn source_service(mut self, source: &str) -> Self {
+        self.source_service = Some(source.to_string());
+        self
+    }
+
+    /// Consumes the builder and returns the completed `WalletTransaction`.
+    pub fn build(self) -> WalletTransaction {
+        WalletTransaction {
+            id: uuid::Uuid::new_v4().to_string(),
+            user_id: self.user_id,
+            role: self.role,
+            transaction_type: self.transaction_type,
+            amount: self.amount,
+            created_at: None,
+            correlation_id: self.correlation_id,
+            source_service: self.source_service,
+        }
+    }
 }
 
 // ── Wallet ───────────────────────────────────────────────────────

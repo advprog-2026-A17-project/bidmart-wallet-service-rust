@@ -88,7 +88,6 @@ impl MidtransGateway {
 }
 
 // ── Internal helpers (private) ───────────────────────────────────
-// Semua detail Midtrans di bawah ini tersembunyi dari luar modul.
 
 const SUPPORTED_IRIS_BANKS: &[&str] = &[
     "bca", "bni", "bri", "mandiri", "permata", "cimb", "danamon", "bsi", "btn", "ocbc", "panin",
@@ -247,7 +246,7 @@ impl MidtransPaymentMethod {
     fn charge_request(self, payment_id: &str, amount: crate::wallet::Money) -> serde_json::Value {
         let transaction_details = serde_json::json!({
             "order_id": payment_id,
-            "gross_amount": amount.cents() as i64
+            "gross_amount": (amount.cents()/100) as i64
         });
 
         match self {

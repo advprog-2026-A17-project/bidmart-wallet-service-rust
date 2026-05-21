@@ -82,7 +82,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         report.flamegraph(file_svg)?;
         let raw_txt_path = output_dir.join("profile_wallet_bidding.txt");
         let mut file_txt = File::create(&raw_txt_path)?;
-        
+
         for (frames, count) in &report.data {
             let mut frame_names = Vec::new();
 
@@ -93,12 +93,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             let frame_string = frame_names.join(";");
-                
+
             use std::io::Write;
             writeln!(file_txt, "{} {}", frame_string, count)?;
         }
-        
-        eprintln!("[profile_wallet_bidding] Raw collapsed profile data: {}", raw_txt_path.display());
+
+        eprintln!(
+            "[profile_wallet_bidding] Raw collapsed profile data: {}",
+            raw_txt_path.display()
+        );
     }
 
     let ns_per_transaction = elapsed.as_nanos() / transactions as u128;

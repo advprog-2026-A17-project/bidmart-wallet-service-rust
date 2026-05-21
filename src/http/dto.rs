@@ -202,9 +202,9 @@ impl From<&Wallet> for WalletResponse {
 impl From<&WalletTransaction> for WalletTransactionResponse {
     fn from(tx: &WalletTransaction) -> Self {
         Self {
-            id: tx.id.clone(),
-            user_id: tx.user_id.clone(),
-            role: tx.role.clone(),
+            id: tx.id.to_string(),
+            user_id: tx.user_id.to_string(),
+            role: tx.role.to_string(),
             transaction_type: tx.transaction_type.as_str().to_string(),
             amount: tx.amount.cents(),
             timestamp: tx.created_at.clone().unwrap_or_default(),

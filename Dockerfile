@@ -16,7 +16,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --release --locked \
     && cp target/release/bidmart-wallet-service-rust ./bidmart-wallet-service-rust
 
-FROM debian:bookworm-slim
+# Reuse the builder base (glibc bookworm) so Compose does not pull debian:bookworm-slim separately.
+FROM rust:1.88-bookworm AS runtime
 
 WORKDIR /app
 

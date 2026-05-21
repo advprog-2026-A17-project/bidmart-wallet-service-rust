@@ -227,7 +227,9 @@ async fn cancel_bid_releases_held_funds() {
         .find(|tx| tx.transaction_type == bidmart_wallet_service_rust::wallet::TransactionType::Bid)
         .unwrap();
 
-    svc.cancel_bid("user-1", "BUYER", &bid_tx.id).await.unwrap();
+    svc.cancel_bid("user-1", "BUYER", &bid_tx.id.to_string())
+        .await
+        .unwrap();
 
     let wallet = svc
         .find_by_user_id_and_role("user-1", "BUYER")
@@ -258,7 +260,9 @@ async fn cancel_bid_wrong_user_fails() {
         .find(|tx| tx.transaction_type == bidmart_wallet_service_rust::wallet::TransactionType::Bid)
         .unwrap();
 
-    let result = svc.cancel_bid("user-2", "BUYER", &bid_tx.id).await;
+    let result = svc
+        .cancel_bid("user-2", "BUYER", &bid_tx.id.to_string())
+        .await;
     assert!(result.is_err());
 }
 

@@ -78,11 +78,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let elapsed = start.elapsed();
 
     if let Ok(report) = guard.report().build() {
-        // 1. Tetap buat file SVG untuk cadangan visual
         let file_svg = File::create(&output_path)?;
         report.flamegraph(file_svg)?;
-
-        // 2. Pembuatan file teks mentah .txt dengan membedah Vector Symbol
         let raw_txt_path = output_dir.join("profile_wallet_bidding.txt");
         let mut file_txt = File::create(&raw_txt_path)?;
         
@@ -91,7 +88,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             for symbols in &frames.frames {
                 for symbol in symbols {
-                    // symbol.name() langsung menghasilkan String, jadi langsung di-push saja!
                     frame_names.push(symbol.name());
                 }
             }

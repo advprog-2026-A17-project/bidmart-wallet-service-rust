@@ -1,8 +1,10 @@
 use std::fmt;
 use std::ops::{Add, Sub};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use uuid::Uuid;
 
 // ── Money ────────────────────────────────────────────────────────
 
@@ -139,9 +141,9 @@ pub enum WalletError {
 /// Immutable record of a single wallet mutation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WalletTransaction {
-    pub id: String,
-    pub user_id: String,
-    pub role: String,
+    pub id: Uuid,
+    pub user_id: Arc<str>,
+    pub role: Arc<str>,
     pub transaction_type: TransactionType,
     pub amount: Money,
     pub created_at: Option<String>,
@@ -157,9 +159,27 @@ impl WalletTransaction {
         amount: Money,
     ) -> Self {
         Self {
-            id: uuid::Uuid::new_v4().to_string(),
-            user_id: user_id.to_string(),
-            role: role.to_string(),
+            id: Uuid::nil(),
+            user_id: Arc::from(user_id),
+            role: Arc::from(role),
+            transaction_type,
+            amount,
+            created_at: None,
+            correlation_id: None,
+            source_service: None,
+        }
+    }
+
+    fn from_wallet(
+        user_id: Arc<str>,
+        role: Arc<str>,
+        transaction_type: TransactionType,
+        amount: Money,
+    ) -> Self {
+        Self {
+            id: Uuid::nil(),
+            user_id,
+            role,
             transaction_type,
             amount,
             created_at: None,
@@ -184,8 +204,8 @@ impl WalletTransaction {
 /// Builder for `WalletTransaction`. Required fields are given at construction;
 /// optional fields (`correlation_id`, `source_service`) are set via method chaining.
 pub struct WalletTransactionBuilder {
-    user_id: String,
-    role: String,
+    user_id: Arc<str>,
+    role: Arc<str>,
     transaction_type: TransactionType,
     amount: Money,
     correlation_id: Option<String>,
@@ -200,8 +220,8 @@ impl WalletTransactionBuilder {
         amount: Money,
     ) -> Self {
         Self {
-            user_id: user_id.to_string(),
-            role: role.to_string(),
+            user_id: Arc::from(user_id),
+            role: Arc::from(role),
             transaction_type,
             amount,
             correlation_id: None,
@@ -224,7 +244,7 @@ impl WalletTransactionBuilder {
     /// Consumes the builder and returns the completed `WalletTransaction`.
     pub fn build(self) -> WalletTransaction {
         WalletTransaction {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: Uuid::nil(),
             user_id: self.user_id,
             role: self.role,
             transaction_type: self.transaction_type,
@@ -246,8 +266,8 @@ impl WalletTransactionBuilder {
 #[derive(Debug, Clone)]
 pub struct Wallet {
     id: String,
-    user_id: String,
-    role: String,
+    user_id: Arc<str>,
+    role: Arc<str>,
     active_balance: Money,
     held_balance: Money,
     version: i64,
@@ -258,8 +278,8 @@ impl Wallet {
     pub fn new(user_id: &str, role: &str) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
-            user_id: user_id.to_string(),
-            role: role.to_string(),
+            user_id: Arc::from(user_id),
+            role: Arc::from(role),
             active_balance: Money::zero(),
             held_balance: Money::zero(),
             version: 0,
@@ -277,8 +297,8 @@ impl Wallet {
     ) -> Self {
         Self {
             id,
-            user_id,
-            role,
+            user_id: Arc::from(user_id),
+            role: Arc::from(role),
             active_balance,
             held_balance,
             version,
@@ -387,7 +407,7 @@ impl Wallet {
     }
 
     fn record(&self, tx_type: TransactionType, amount: Money) -> WalletTransaction {
-        WalletTransaction::new(&self.user_id, &self.role, tx_type, amount)
+        WalletTransaction::from_wallet(self.user_id.clone(), self.role.clone(), tx_type, amount)
     }
 }
 

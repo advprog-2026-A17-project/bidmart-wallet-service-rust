@@ -8,23 +8,31 @@ use uuid::Uuid;
 
 // ── Money ────────────────────────────────────────────────────────
 
-/// Monetary value stored as whole cents to avoid floating-point precision issues.
+/// Monetary value stored as whole rupiah.
 ///
 /// This is a value object — immutable, comparable, and safe for arithmetic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Money(u64);
 
 impl Money {
-    pub fn from_cents(value: u64) -> Self {
+    pub fn from_rupiah(value: u64) -> Self {
         Self(value)
+    }
+
+    pub fn from_cents(value: u64) -> Self {
+        Self::from_rupiah(value)
     }
 
     pub fn zero() -> Self {
         Self(0)
     }
 
-    pub fn cents(self) -> u64 {
+    pub fn rupiah(self) -> u64 {
         self.0
+    }
+
+    pub fn cents(self) -> u64 {
+        self.rupiah()
     }
 
     pub fn is_zero(self) -> bool {
@@ -55,7 +63,7 @@ impl Sub for Money {
 
 impl fmt::Display for Money {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}.{:02}", self.0 / 100, self.0 % 100)
+        write!(f, "{}", self.0)
     }
 }
 
@@ -483,7 +491,7 @@ pub struct PaymentIntent {
     pub id: String,
     pub user_id: String,
     pub role: String,
-    pub amount_cents: i64,
+    pub amount: i64,
     pub status: String,
     pub redirect_url: String,
     pub va_number: Option<String>,
@@ -497,7 +505,7 @@ pub struct WalletWithdrawal {
     pub id: String,
     pub user_id: String,
     pub role: String,
-    pub amount_cents: i64,
+    pub amount: i64,
     pub bank_account: String,
     pub bank_code: Option<String>,
     pub account_number: Option<String>,

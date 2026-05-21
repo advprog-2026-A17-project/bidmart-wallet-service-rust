@@ -129,7 +129,7 @@ async fn top_up(
 ) -> impl IntoResponse {
     let role = q.role.as_deref().unwrap_or("BUYER");
     match svc
-        .top_up(&user_id, role, Money::from_cents(q.amount))
+        .top_up(&user_id, role, Money::from_rupiah(q.amount))
         .await
     {
         Ok(w) => {
@@ -150,7 +150,7 @@ async fn create_top_up_intent(
         .create_top_up_intent(
             &user_id,
             role,
-            Money::from_cents(req.amount_cents),
+            Money::from_rupiah(req.amount),
             req.payment_method.as_deref(),
         )
         .await
@@ -211,7 +211,7 @@ async fn hold_funds(
             role,
             &req.auction_id,
             &req.bid_id,
-            Money::from_cents(req.amount),
+            Money::from_rupiah(req.amount),
             &req.hold_id,
             &req.expires_at,
         )
@@ -255,7 +255,7 @@ async fn credit_seller_escrow(
     Json(req): Json<SellerEscrowRequest>,
 ) -> impl IntoResponse {
     require_internal_token(&headers)?;
-    let amount = Money::from_cents(req.amount_cents);
+    let amount = Money::from_rupiah(req.amount);
     match svc.credit_seller_escrow(&req.seller_id, amount).await {
         Ok(wallet) => Ok(Json(WalletResponse::from(&wallet))),
         Err(e) => Err(map_error(e)),
@@ -268,7 +268,7 @@ async fn payout_seller(
     Json(req): Json<PayoutSellerRequest>,
 ) -> impl IntoResponse {
     require_internal_token(&headers)?;
-    let amount = Money::from_cents(req.amount_cents);
+    let amount = Money::from_rupiah(req.amount);
     match svc.settle_seller_escrow(&req.seller_id, amount).await {
         Ok(wallet) => {
             METRICS.record_operation("payout");
@@ -284,7 +284,7 @@ async fn try_bid(
     Query(q): Query<AmountQuery>,
 ) -> impl IntoResponse {
     let role = q.role.as_deref().unwrap_or("BUYER");
-    match svc.bid(&user_id, role, Money::from_cents(q.amount)).await {
+    match svc.bid(&user_id, role, Money::from_rupiah(q.amount)).await {
         Ok(w) => {
             METRICS.record_operation("try_bid");
             Ok(Json(WalletResponse::from(&w)))
@@ -300,7 +300,7 @@ async fn withdraw(
 ) -> impl IntoResponse {
     let role = q.role.as_deref().unwrap_or("BUYER");
     match svc
-        .withdraw(&user_id, role, Money::from_cents(q.amount))
+        .withdraw(&user_id, role, Money::from_rupiah(q.amount))
         .await
     {
         Ok(w) => Ok(Json(WalletResponse::from(&w))),
@@ -318,7 +318,7 @@ async fn create_withdrawal(
         .create_withdrawal(
             &user_id,
             role,
-            Money::from_cents(req.amount_cents),
+            Money::from_rupiah(req.amount),
             &req.bank_code,
             &req.account_number,
         )

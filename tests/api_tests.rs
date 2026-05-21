@@ -131,7 +131,7 @@ async fn midtrans_top_up_intent_returns_pending_payment_without_crediting_wallet
         .method("POST")
         .uri("/api/v1/wallet/user-1/top-up/intent")
         .header("content-type", "application/json")
-        .body(Body::from(r#"{"amountCents":5000}"#))
+        .body(Body::from(r#"{"amount":5000}"#))
         .unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
@@ -139,7 +139,7 @@ async fn midtrans_top_up_intent_returns_pending_payment_without_crediting_wallet
     let json = body_to_json(resp.into_body()).await;
     let payment_id = json["paymentId"].as_str().unwrap();
     assert!(!payment_id.is_empty());
-    assert_eq!(json["amountCents"], 5000);
+    assert_eq!(json["amount"], 5000);
     assert_eq!(json["status"], "PENDING");
     assert!(json["redirectUrl"].as_str().unwrap().contains(payment_id));
 
@@ -169,7 +169,7 @@ async fn wallet_detail_exposes_unpaid_payment_history_and_payment_detail_expires
         .uri("/api/v1/wallet/user-1/top-up/intent")
         .header("content-type", "application/json")
         .body(Body::from(
-            r#"{"amountCents":5000,"paymentMethod":"bca_va"}"#,
+            r#"{"amount":5000,"paymentMethod":"bca_va"}"#,
         ))
         .unwrap();
     let intent_resp = app.clone().oneshot(intent).await.unwrap();
@@ -234,7 +234,7 @@ async fn midtrans_paid_callback_credits_wallet_once() {
         .method("POST")
         .uri("/api/v1/wallet/user-1/top-up/intent")
         .header("content-type", "application/json")
-        .body(Body::from(r#"{"amountCents":7500}"#))
+        .body(Body::from(r#"{"amount":7500}"#))
         .unwrap();
     let intent_resp = app.clone().oneshot(intent).await.unwrap();
     let intent_json = body_to_json(intent_resp.into_body()).await;
@@ -279,7 +279,7 @@ async fn midtrans_failed_and_expired_payments_are_recorded_in_history() {
             .method("POST")
             .uri("/api/v1/wallet/user-1/top-up/intent")
             .header("content-type", "application/json")
-            .body(Body::from(r#"{"amountCents":4500}"#))
+            .body(Body::from(r#"{"amount":4500}"#))
             .unwrap();
         let intent_resp = app.clone().oneshot(intent).await.unwrap();
         let intent_json = body_to_json(intent_resp.into_body()).await;
@@ -332,7 +332,7 @@ async fn midtrans_return_callback_maps_web_sandbox_statuses() {
         .method("POST")
         .uri("/api/v1/wallet/user-1/top-up/intent")
         .header("content-type", "application/json")
-        .body(Body::from(r#"{"amountCents":9900}"#))
+        .body(Body::from(r#"{"amount":9900}"#))
         .unwrap();
     let intent_resp = app.clone().oneshot(intent).await.unwrap();
     let intent_json = body_to_json(intent_resp.into_body()).await;
@@ -598,7 +598,7 @@ async fn midtrans_failed_withdrawal_reverses_reserved_balance() {
         .uri("/api/v1/wallet/user-1/withdrawals")
         .header("content-type", "application/json")
         .body(Body::from(
-            r#"{"amountCents":3000,"bankCode":"bca","accountNumber":"1234567890"}"#,
+            r#"{"amount":3000,"bankCode":"bca","accountNumber":"1234567890"}"#,
         ))
         .unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
@@ -606,7 +606,7 @@ async fn midtrans_failed_withdrawal_reverses_reserved_balance() {
     let json = body_to_json(resp.into_body()).await;
     assert_eq!(status, StatusCode::CREATED, "{json}");
     let withdrawal_id = json["withdrawalId"].as_str().unwrap();
-    assert_eq!(json["amountCents"], 3000);
+    assert_eq!(json["amount"], 3000);
     assert_eq!(json["status"], "PENDING");
     assert_eq!(json["bankCode"], "bca");
     assert_eq!(json["accountNumber"], "1234567890");
@@ -834,7 +834,7 @@ async fn seller_escrow_credit_and_payout_settlement_moves_held_to_active() {
         .header("content-type", "application/json")
         .header("X-Internal-Service-Token", "bidmart-local-internal-token")
         .body(Body::from(
-            r#"{"sellerId":"seller-1","amountCents":7500,"correlationId":"auction-1"}"#,
+            r#"{"sellerId":"seller-1","amount":7500,"correlationId":"auction-1"}"#,
         ))
         .unwrap();
     let escrow_resp = app.clone().oneshot(escrow).await.unwrap();
@@ -849,7 +849,7 @@ async fn seller_escrow_credit_and_payout_settlement_moves_held_to_active() {
         .header("content-type", "application/json")
         .header("X-Internal-Service-Token", "bidmart-local-internal-token")
         .body(Body::from(
-            r#"{"sellerId":"seller-1","amountCents":7500,"orderId":"order-1"}"#,
+            r#"{"sellerId":"seller-1","amount":7500,"orderId":"order-1"}"#,
         ))
         .unwrap();
     let payout_resp = app.clone().oneshot(payout).await.unwrap();

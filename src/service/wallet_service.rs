@@ -287,7 +287,7 @@ impl WalletService {
                     self.top_up(
                         &payment.user_id,
                         &payment.role,
-                        Money::from_cents(payment.amount_cents as u64),
+                        Money::from_rupiah(payment.amount as u64),
                     )
                     .await?;
                 }
@@ -297,7 +297,7 @@ impl WalletService {
                         &payment.user_id,
                         &payment.role,
                         TransactionType::TopUpFailed,
-                        Money::from_cents(payment.amount_cents as u64),
+                        Money::from_rupiah(payment.amount as u64),
                         payment_id,
                     )
                     .await?;
@@ -307,7 +307,7 @@ impl WalletService {
                         &payment.user_id,
                         &payment.role,
                         TransactionType::TopUpExpired,
-                        Money::from_cents(payment.amount_cents as u64),
+                        Money::from_rupiah(payment.amount as u64),
                         payment_id,
                     )
                     .await?;
@@ -404,7 +404,7 @@ impl WalletService {
 
         if withdrawal.status == "PENDING" {
             if normalized == "FAILED" || normalized == "EXPIRED" {
-                let amount = Money::from_cents(withdrawal.amount_cents as u64);
+                let amount = Money::from_rupiah(withdrawal.amount as u64);
                 self.top_up(&withdrawal.user_id, &withdrawal.role, amount)
                     .await?;
                 let tx_type = if normalized == "FAILED" {

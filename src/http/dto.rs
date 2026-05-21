@@ -97,6 +97,37 @@ pub struct MidtransPaymentReturnRequest {
     pub status_code: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PaymentIntentRequest {
+    pub amount_cents: u64,
+    pub payment_method: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WithdrawalRequest {
+    pub amount_cents: u64,
+    pub bank_code: String,
+    pub account_number: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MidtransSimulationRequest {
+    pub status: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MidtransPaymentReturnRequest {
+    #[serde(alias = "order_id")]
+    pub order_id: String,
+    #[serde(alias = "transaction_status")]
+    pub transaction_status: String,
+    #[serde(alias = "status_code")]
+    pub status_code: Option<String>,
+}
+
 // ── Response DTOs ───────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]

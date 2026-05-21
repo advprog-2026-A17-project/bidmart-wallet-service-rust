@@ -198,6 +198,62 @@ async fn record_payment_return(
     }
 }
 
+async fn create_top_up_intent(
+    State(svc): State<AppState>,
+    Path(user_id): Path<String>,
+    Json(req): Json<PaymentIntentRequest>,
+) -> impl IntoResponse {
+    match svc
+        .create_top_up_intent(
+            &user_id,
+            Money::from_cents(req.amount_cents),
+            req.payment_method.as_deref(),
+        )
+        .await
+    {
+        Ok(payment) => Ok((
+            StatusCode::CREATED,
+            Json(PaymentIntentResponse::from(&payment)),
+        )),
+        Err(e) => Err(map_error(e)),
+    }
+}
+
+async fn simulate_payment(
+    State(svc): State<AppState>,
+    Path(payment_id): Path<String>,
+    Json(req): Json<MidtransSimulationRequest>,
+) -> impl IntoResponse {
+    match svc.simulate_payment_status(&payment_id, &req.status).await {
+        Ok(payment) => Ok(Json(PaymentIntentResponse::from(&payment))),
+        Err(e) => Err(map_error(e)),
+    }
+}
+
+async fn sync_payment(
+    State(svc): State<AppState>,
+    Path(payment_id): Path<String>,
+) -> impl IntoResponse {
+    match svc.sync_midtrans_payment_status(&payment_id).await {
+        Ok(payment) => Ok(Json(PaymentIntentResponse::from(&payment))),
+        Err(e) => Err(map_error(e)),
+    }
+}
+
+async fn record_payment_return(
+    State(svc): State<AppState>,
+    Json(req): Json<MidtransPaymentReturnRequest>,
+) -> impl IntoResponse {
+    let _ = req.status_code.as_deref();
+    match svc
+        .apply_midtrans_payment_result(&req.order_id, &req.transaction_status)
+        .await
+    {
+        Ok(payment) => Ok(Json(PaymentIntentResponse::from(&payment))),
+        Err(e) => Err(map_error(e)),
+    }
+}
+
 async fn hold_funds(
     State(svc): State<AppState>,
     headers: HeaderMap,

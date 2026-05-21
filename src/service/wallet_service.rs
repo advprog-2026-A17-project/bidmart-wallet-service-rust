@@ -62,6 +62,70 @@ impl std::fmt::Display for ServiceError {
     }
 }
 
+#[derive(Debug, Clone)]
+struct MidtransPaymentPage {
+    redirect_url: String,
+    va_number: Option<String>,
+    payment_channel: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct MidtransBankTransferChargeResponse {
+    transaction_status: Option<String>,
+    va_numbers: Option<Vec<MidtransVaNumber>>,
+    permata_va_number: Option<String>,
+    biller_code: Option<String>,
+    bill_key: Option<String>,
+    actions: Option<Vec<MidtransAction>>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct MidtransVaNumber {
+    bank: String,
+    va_number: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct MidtransAction {
+    name: String,
+    url: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct MidtransTransactionStatusResponse {
+    transaction_status: String,
+}
+
+#[derive(Debug, Clone)]
+struct MidtransValidatedBankAccount {
+    bank_code: String,
+    account_number: String,
+    account_name: String,
+}
+
+#[derive(Debug, Clone)]
+struct MidtransPayoutResult {
+    reference_no: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct MidtransAccountValidationResponse {
+    account_name: Option<String>,
+    account_no: Option<String>,
+    bank: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct MidtransPayoutResponse {
+    payouts: Option<Vec<MidtransPayoutItem>>,
+    reference_no: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct MidtransPayoutItem {
+    reference_no: Option<String>,
+}
+
 // ── WalletService ───────────────────────────────────────────────
 
 /// Orchestrates wallet use cases by coordinating domain logic and persistence.
@@ -112,6 +176,41 @@ impl WalletService {
         role: &str,
     ) -> Result<Vec<WalletTransaction>, ServiceError> {
         Ok(self.tx_repo.find_by_user_id_and_role(user_id, role).await?)
+    }
+
+    pub async fn get_unpaid_payment_intents(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<PaymentIntent>, ServiceError> {
+        let payments = self
+            .wallet_repo
+            .find_unpaid_payment_intents_by_user(user_id)
+            .await?;
+        let mut reconciled = Vec::with_capacity(payments.len());
+
+        for payment in payments {
+            reconciled.push(self.expire_payment_if_needed(payment).await?);
+        }
+
+        Ok(reconciled)
+    }
+
+    pub async fn get_payment_intent_for_user(
+        &self,
+        user_id: &str,
+        payment_id: &str,
+    ) -> Result<PaymentIntent, ServiceError> {
+        let payment = self
+            .wallet_repo
+            .find_payment_intent(payment_id)
+            .await?
+            .ok_or_else(|| ServiceError::TransactionNotFound(payment_id.to_string()))?;
+
+        if payment.user_id != user_id {
+            return Err(ServiceError::ForbiddenAccess);
+        }
+
+        self.expire_payment_if_needed(payment).await
     }
 
     pub async fn get_unpaid_payment_intents(

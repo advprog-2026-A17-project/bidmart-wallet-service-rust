@@ -97,37 +97,6 @@ pub struct MidtransPaymentReturnRequest {
     pub status_code: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PaymentIntentRequest {
-    pub amount_cents: u64,
-    pub payment_method: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WithdrawalRequest {
-    pub amount_cents: u64,
-    pub bank_code: String,
-    pub account_number: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct MidtransSimulationRequest {
-    pub status: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MidtransPaymentReturnRequest {
-    #[serde(alias = "order_id")]
-    pub order_id: String,
-    #[serde(alias = "transaction_status")]
-    pub transaction_status: String,
-    #[serde(alias = "status_code")]
-    pub status_code: Option<String>,
-}
-
 // ── Response DTOs ───────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
@@ -233,9 +202,9 @@ impl From<&Wallet> for WalletResponse {
 impl From<&WalletTransaction> for WalletTransactionResponse {
     fn from(tx: &WalletTransaction) -> Self {
         Self {
-            id: tx.id.clone(),
-            user_id: tx.user_id.clone(),
-            role: tx.role.clone(),
+            id: tx.id.to_string(),
+            user_id: tx.user_id.to_string(),
+            role: tx.role.to_string(),
             transaction_type: tx.transaction_type.as_str().to_string(),
             amount: tx.amount.cents(),
             timestamp: tx.created_at.clone().unwrap_or_default(),

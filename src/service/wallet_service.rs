@@ -259,10 +259,7 @@ impl WalletService {
         }
 
         // Facade call — no URL or auth details here
-        let transaction_status = self
-            .midtrans
-            .fetch_transaction_status(payment_id)
-            .await?;
+        let transaction_status = self.midtrans.fetch_transaction_status(payment_id).await?;
 
         let normalized = map_midtrans_transaction_status(&transaction_status)
             .map_err(ServiceError::InvalidPaymentStatus)?;
@@ -352,10 +349,10 @@ impl WalletService {
             return Err(ServiceError::Domain(WalletError::InvalidAmount));
         }
 
-        let bank_code = normalize_bank_code(bank_code)
-            .map_err(ServiceError::InvalidPaymentStatus)?;
-        let account_number = normalize_account_number(account_number)
-            .map_err(ServiceError::InvalidPaymentStatus)?;
+        let bank_code =
+            normalize_bank_code(bank_code).map_err(ServiceError::InvalidPaymentStatus)?;
+        let account_number =
+            normalize_account_number(account_number).map_err(ServiceError::InvalidPaymentStatus)?;
 
         // Facade calls — IRIS API details are hidden inside MidtransGateway
         let validated_account = self
@@ -485,7 +482,7 @@ impl WalletService {
             .await?
             .ok_or_else(|| ServiceError::TransactionNotFound(bid_tx_id.to_string()))?;
 
-        if tx.user_id != user_id || tx.role != role {
+        if tx.user_id.as_ref() != user_id || tx.role.as_ref() != role {
             return Err(ServiceError::ForbiddenAccess);
         }
 

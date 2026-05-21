@@ -833,7 +833,9 @@ async fn seller_escrow_credit_and_payout_settlement_moves_held_to_active() {
         .uri("/api/v1/wallet/seller-escrow")
         .header("content-type", "application/json")
         .header("X-Internal-Service-Token", "bidmart-local-internal-token")
-        .body(Body::from(r#"{"sellerId":"seller-1","amountCents":7500,"correlationId":"auction-1"}"#))
+        .body(Body::from(
+            r#"{"sellerId":"seller-1","amountCents":7500,"correlationId":"auction-1"}"#,
+        ))
         .unwrap();
     let escrow_resp = app.clone().oneshot(escrow).await.unwrap();
     assert_eq!(escrow_resp.status(), StatusCode::OK);
@@ -846,7 +848,9 @@ async fn seller_escrow_credit_and_payout_settlement_moves_held_to_active() {
         .uri("/api/v1/wallet/payout")
         .header("content-type", "application/json")
         .header("X-Internal-Service-Token", "bidmart-local-internal-token")
-        .body(Body::from(r#"{"sellerId":"seller-1","amountCents":7500,"orderId":"order-1"}"#))
+        .body(Body::from(
+            r#"{"sellerId":"seller-1","amountCents":7500,"orderId":"order-1"}"#,
+        ))
         .unwrap();
     let payout_resp = app.clone().oneshot(payout).await.unwrap();
     assert_eq!(payout_resp.status(), StatusCode::OK);

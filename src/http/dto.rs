@@ -41,7 +41,8 @@ pub struct ConvertFundsRequest {
 #[serde(rename_all = "camelCase")]
 pub struct PayoutSellerRequest {
     pub seller_id: String,
-    pub amount_cents: u64,
+    #[serde(alias = "amountCents")]
+    pub amount: u64,
     pub order_id: Option<String>,
 }
 
@@ -49,7 +50,8 @@ pub struct PayoutSellerRequest {
 #[serde(rename_all = "camelCase")]
 pub struct SellerEscrowRequest {
     pub seller_id: String,
-    pub amount_cents: u64,
+    #[serde(alias = "amountCents")]
+    pub amount: u64,
     pub correlation_id: Option<String>,
 }
 
@@ -67,7 +69,8 @@ pub struct RoleQuery {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PaymentIntentRequest {
-    pub amount_cents: u64,
+    #[serde(alias = "amountCents")]
+    pub amount: u64,
     pub role: Option<String>,
     pub payment_method: Option<String>,
 }
@@ -75,7 +78,8 @@ pub struct PaymentIntentRequest {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WithdrawalRequest {
-    pub amount_cents: u64,
+    #[serde(alias = "amountCents")]
+    pub amount: u64,
     pub role: Option<String>,
     pub bank_code: String,
     pub account_number: String,
@@ -161,7 +165,7 @@ pub struct StructuredErrorResponse {
 #[serde(rename_all = "camelCase")]
 pub struct PaymentIntentResponse {
     pub payment_id: String,
-    pub amount_cents: u64,
+    pub amount: u64,
     pub role: String,
     pub status: String,
     pub redirect_url: String,
@@ -176,7 +180,7 @@ pub struct PaymentIntentResponse {
 #[serde(rename_all = "camelCase")]
 pub struct WithdrawalResponse {
     pub withdrawal_id: String,
-    pub amount_cents: u64,
+    pub amount: u64,
     pub role: String,
     pub status: String,
     pub bank_code: Option<String>,
@@ -193,8 +197,8 @@ impl From<&Wallet> for WalletResponse {
             id: w.id().to_string(),
             user_id: w.user_id().to_string(),
             role: w.role().to_string(),
-            active_balance: w.active_balance().cents(),
-            held_balance: w.held_balance().cents(),
+            active_balance: w.active_balance().rupiah(),
+            held_balance: w.held_balance().rupiah(),
         }
     }
 }
@@ -206,7 +210,7 @@ impl From<&WalletTransaction> for WalletTransactionResponse {
             user_id: tx.user_id.to_string(),
             role: tx.role.to_string(),
             transaction_type: tx.transaction_type.as_str().to_string(),
-            amount: tx.amount.cents(),
+            amount: tx.amount.rupiah(),
             timestamp: tx.created_at.clone().unwrap_or_default(),
             correlation_id: tx.correlation_id.clone(),
             source_service: tx.source_service.clone(),
@@ -234,7 +238,7 @@ impl From<&PaymentIntent> for PaymentIntentResponse {
     fn from(payment: &PaymentIntent) -> Self {
         Self {
             payment_id: payment.id.clone(),
-            amount_cents: payment.amount_cents as u64,
+            amount: payment.amount as u64,
             role: payment.role.clone(),
             status: payment.status.clone(),
             redirect_url: payment.redirect_url.clone(),
@@ -251,7 +255,7 @@ impl From<&WalletWithdrawal> for WithdrawalResponse {
     fn from(withdrawal: &WalletWithdrawal) -> Self {
         Self {
             withdrawal_id: withdrawal.id.clone(),
-            amount_cents: withdrawal.amount_cents as u64,
+            amount: withdrawal.amount as u64,
             role: withdrawal.role.clone(),
             status: withdrawal.status.clone(),
             bank_code: withdrawal.bank_code.clone(),

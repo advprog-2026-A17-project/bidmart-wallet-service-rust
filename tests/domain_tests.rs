@@ -27,7 +27,7 @@ fn money_add() {
 fn money_display_formats_correctly() {
     let m = Money::from_cents(10050);
     let display = format!("{m}");
-    assert_eq!(display, "100.50");
+    assert_eq!(display, "10050");
 }
 
 // ── Wallet creation tests ────────────────────────────────────────

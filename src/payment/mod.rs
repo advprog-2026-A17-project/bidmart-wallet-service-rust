@@ -246,7 +246,7 @@ impl MidtransPaymentMethod {
     fn charge_request(self, payment_id: &str, amount: crate::wallet::Money) -> serde_json::Value {
         let transaction_details = serde_json::json!({
             "order_id": payment_id,
-            "gross_amount": (amount.cents()/100) as i64
+            "gross_amount": amount.rupiah() as i64
         });
 
         match self {
@@ -483,7 +483,7 @@ async fn create_midtrans_payout(
             "beneficiary_account": account.account_number,
             "beneficiary_bank": account.bank_code,
             "beneficiary_email": format!("{user_id}@bidmart.local"),
-            "amount": amount.cents(),
+            "amount": amount.rupiah(),
             "notes": "BidMart wallet withdrawal",
             "reference_no": reference_no
         }]

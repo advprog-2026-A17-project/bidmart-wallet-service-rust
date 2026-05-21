@@ -1,19 +1,19 @@
 use std::sync::Arc;
-use std::sync::OnceLock;
-use std::time::Instant;
 
 use axum::extract::{Path, Query, State};
+use axum::middleware::from_fn;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 
 use crate::http::dto::*;
+use crate::http::metrics::{self, METRICS};
 use crate::service::wallet_service::{ServiceError, WalletService};
 use crate::wallet::{Money, WalletError};
 
 type AppState = Arc<WalletService>;
-const DEFAULT_INTERNAL_TOKEN: &str = "local-dev-internal-token";
+const DEFAULT_INTERNAL_TOKEN: &str = "bidmart-local-internal-token";
 
 pub fn create_router(service: WalletService) -> Router {
     let state: AppState = Arc::new(service);
@@ -23,6 +23,7 @@ pub fn create_router(service: WalletService) -> Router {
         .route("/hold", post(hold_funds))
         .route("/release", post(release_funds))
         .route("/convert", post(convert_funds))
+        .route("/seller-escrow", post(credit_seller_escrow))
         .route("/payout", post(payout_seller))
         .route("/:userId", get(get_wallet))
         .route("/:userId/detail", get(get_wallet_detail))
@@ -47,22 +48,13 @@ pub fn create_router(service: WalletService) -> Router {
     Router::new()
         .route("/metrics", get(metrics))
         .nest("/api/v1/wallet", wallet_routes)
+        .layer(from_fn(metrics::record_http_metrics))
 }
 
 async fn metrics() -> impl IntoResponse {
-    static STARTED_AT: OnceLock<Instant> = OnceLock::new();
-    let uptime_seconds = STARTED_AT.get_or_init(Instant::now).elapsed().as_secs_f64();
-
     (
         [("content-type", "text/plain; version=0.0.4; charset=utf-8")],
-        format!(
-            "# HELP bidmart_service_up Service availability gauge\n\
-             # TYPE bidmart_service_up gauge\n\
-             bidmart_service_up{{service=\"wallet\"}} 1\n\
-             # HELP bidmart_service_uptime_seconds Service uptime in seconds\n\
-             # TYPE bidmart_service_uptime_seconds gauge\n\
-             bidmart_service_uptime_seconds{{service=\"wallet\"}} {uptime_seconds}\n"
-        ),
+        metrics::render_prometheus_body(metrics::service_uptime_seconds()),
     )
 }
 
@@ -140,7 +132,10 @@ async fn top_up(
         .top_up(&user_id, role, Money::from_cents(q.amount))
         .await
     {
-        Ok(w) => Ok(Json(WalletResponse::from(&w))),
+        Ok(w) => {
+            METRICS.record_operation("top_up");
+            Ok(Json(WalletResponse::from(&w)))
+        }
         Err(e) => Err(map_error(e)),
     }
 }
@@ -222,7 +217,10 @@ async fn hold_funds(
         )
         .await
     {
-        Ok(hold) => Ok(Json(HoldResponse::from(&hold))),
+        Ok(hold) => {
+            METRICS.record_operation("hold");
+            Ok(Json(HoldResponse::from(&hold)))
+        }
         Err(e) => Err(map_error(e)),
     }
 }
@@ -251,6 +249,19 @@ async fn convert_funds(
     }
 }
 
+async fn credit_seller_escrow(
+    State(svc): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<SellerEscrowRequest>,
+) -> impl IntoResponse {
+    require_internal_token(&headers)?;
+    let amount = Money::from_cents(req.amount_cents);
+    match svc.credit_seller_escrow(&req.seller_id, amount).await {
+        Ok(wallet) => Ok(Json(WalletResponse::from(&wallet))),
+        Err(e) => Err(map_error(e)),
+    }
+}
+
 async fn payout_seller(
     State(svc): State<AppState>,
     headers: HeaderMap,
@@ -258,8 +269,11 @@ async fn payout_seller(
 ) -> impl IntoResponse {
     require_internal_token(&headers)?;
     let amount = Money::from_cents(req.amount_cents);
-    match svc.payout_to_seller(&req.seller_id, amount).await {
-        Ok(wallet) => Ok(Json(WalletResponse::from(&wallet))),
+    match svc.settle_seller_escrow(&req.seller_id, amount).await {
+        Ok(wallet) => {
+            METRICS.record_operation("payout");
+            Ok(Json(WalletResponse::from(&wallet)))
+        }
         Err(e) => Err(map_error(e)),
     }
 }
@@ -271,7 +285,10 @@ async fn try_bid(
 ) -> impl IntoResponse {
     let role = q.role.as_deref().unwrap_or("BUYER");
     match svc.bid(&user_id, role, Money::from_cents(q.amount)).await {
-        Ok(w) => Ok(Json(WalletResponse::from(&w))),
+        Ok(w) => {
+            METRICS.record_operation("try_bid");
+            Ok(Json(WalletResponse::from(&w)))
+        }
         Err(e) => Err(map_error(e)),
     }
 }
@@ -380,6 +397,8 @@ fn map_error(e: ServiceError) -> (StatusCode, Json<StructuredErrorResponse>) {
         ServiceError::HoldFailed(msg) => {
             let code = if msg.contains("Insufficient active balance") {
                 "INSUFFICIENT_ACTIVE_BALANCE"
+            } else if msg.contains("HOLD_NOT_ACTIVE") {
+                "HOLD_NOT_ACTIVE"
             } else {
                 "HOLD_OPERATION_FAILED"
             };

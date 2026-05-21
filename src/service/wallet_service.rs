@@ -485,7 +485,7 @@ impl WalletService {
             .await?
             .ok_or_else(|| ServiceError::TransactionNotFound(bid_tx_id.to_string()))?;
 
-        if tx.user_id != user_id || tx.role != role {
+        if tx.user_id.as_ref() != user_id || tx.role.as_ref() != role {
             return Err(ServiceError::ForbiddenAccess);
         }
 

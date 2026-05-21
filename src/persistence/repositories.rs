@@ -34,14 +34,22 @@ fn wallet_from_row(row: WalletRow) -> Wallet {
 
 fn transaction_from_row(row: TransactionRow) -> WalletTransaction {
     WalletTransaction {
-        id: row.id,
-        user_id: row.user_id,
-        role: row.role,
+        id: uuid::Uuid::parse_str(&row.id).expect("persisted wallet transaction id must be UUID"),
+        user_id: std::sync::Arc::from(row.user_id),
+        role: std::sync::Arc::from(row.role),
         transaction_type: TransactionType::from_str(&row.transaction_type),
         amount: Money::from_cents(row.amount_cents as u64),
         created_at: Some(row.created_at),
         correlation_id: row.correlation_id,
         source_service: row.source_service,
+    }
+}
+
+fn transaction_id_for_insert(tx: &WalletTransaction) -> String {
+    if tx.id.is_nil() {
+        uuid::Uuid::new_v4().to_string()
+    } else {
+        tx.id.to_string()
     }
 }
 
@@ -157,9 +165,9 @@ impl WalletRepository {
         }
 
         sqlx::query("INSERT INTO wallet_transactions (id, user_id, role, transaction_type, amount_cents, correlation_id, source_service) VALUES ($1, $2, $3, $4, $5, $6, $7)")
-            .bind(&wallet_tx.id)
-            .bind(&wallet_tx.user_id)
-            .bind(&wallet_tx.role)
+            .bind(transaction_id_for_insert(&wallet_tx))
+            .bind(wallet_tx.user_id.as_ref())
+            .bind(wallet_tx.role.as_ref())
             .bind(wallet_tx.transaction_type.as_str())
             .bind(wallet_tx.amount.cents() as i64)
             .bind(&wallet_tx.correlation_id)
@@ -236,9 +244,9 @@ impl WalletRepository {
         }
 
         sqlx::query("INSERT INTO wallet_transactions (id, user_id, role, transaction_type, amount_cents, correlation_id, source_service) VALUES ($1, $2, $3, $4, $5, $6, $7)")
-            .bind(&wallet_tx.id)
-            .bind(&wallet_tx.user_id)
-            .bind(&wallet_tx.role)
+            .bind(transaction_id_for_insert(&wallet_tx))
+            .bind(wallet_tx.user_id.as_ref())
+            .bind(wallet_tx.role.as_ref())
             .bind(wallet_tx.transaction_type.as_str())
             .bind(wallet_tx.amount.cents() as i64)
             .bind(&wallet_tx.correlation_id)
@@ -306,9 +314,9 @@ impl WalletRepository {
         }
 
         sqlx::query("INSERT INTO wallet_transactions (id, user_id, role, transaction_type, amount_cents, correlation_id, source_service) VALUES ($1, $2, $3, $4, $5, $6, $7)")
-            .bind(&wallet_tx.id)
-            .bind(&wallet_tx.user_id)
-            .bind(&wallet_tx.role)
+            .bind(transaction_id_for_insert(&wallet_tx))
+            .bind(wallet_tx.user_id.as_ref())
+            .bind(wallet_tx.role.as_ref())
             .bind(wallet_tx.transaction_type.as_str())
             .bind(wallet_tx.amount.cents() as i64)
             .bind(&wallet_tx.correlation_id)
@@ -492,9 +500,9 @@ impl TransactionRepository {
         sqlx::query(
             "INSERT INTO wallet_transactions (id, user_id, role, transaction_type, amount_cents, correlation_id, source_service) VALUES ($1, $2, $3, $4, $5, $6, $7)",
         )
-        .bind(&tx.id)
-        .bind(&tx.user_id)
-        .bind(&tx.role)
+        .bind(transaction_id_for_insert(tx))
+        .bind(tx.user_id.as_ref())
+        .bind(tx.role.as_ref())
         .bind(tx.transaction_type.as_str())
         .bind(tx.amount.cents() as i64)
         .bind(&tx.correlation_id)

@@ -316,13 +316,17 @@ async fn find_transaction_by_id() {
         TransactionType::Bid,
         Money::from_cents(3000),
     );
-    let tx_id = tx.id.clone();
     repo.insert(&tx).await.unwrap();
+    let history = repo
+        .find_by_user_id_and_role("user-1", "BUYER")
+        .await
+        .unwrap();
+    let tx_id = history[0].id.to_string();
 
     let found = repo.find_by_id(&tx_id).await.unwrap();
     assert!(found.is_some());
     let found = found.unwrap();
-    assert_eq!(found.user_id, "user-1");
+    assert_eq!(found.user_id.as_ref(), "user-1");
     assert_eq!(found.transaction_type, TransactionType::Bid);
     assert_eq!(found.amount, Money::from_cents(3000));
 }

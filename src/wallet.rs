@@ -70,6 +70,8 @@ pub enum TransactionType {
     Release,
     Convert,
     Payout,
+    SellerEscrow,
+    SellerEscrowSettle,
     Bid,
     CancelBid,
     TopUpFailed,
@@ -87,6 +89,8 @@ impl TransactionType {
             Self::Release => "RELEASE",
             Self::Convert => "CONVERT",
             Self::Payout => "PAYOUT",
+            Self::SellerEscrow => "SELLER_ESCROW",
+            Self::SellerEscrowSettle => "SELLER_ESCROW_SETTLE",
             Self::Bid => "BID",
             Self::CancelBid => "CANCEL_BID",
             Self::TopUpFailed => "TOP_UP_FAILED",
@@ -107,6 +111,8 @@ impl TransactionType {
             "RELEASE" => Self::Release,
             "CONVERT" => Self::Convert,
             "PAYOUT" => Self::Payout,
+            "SELLER_ESCROW" => Self::SellerEscrow,
+            "SELLER_ESCROW_SETTLE" => Self::SellerEscrowSettle,
             "BID" => Self::Bid,
             "CANCEL_BID" => Self::CancelBid,
             "TOP_UP_FAILED" => Self::TopUpFailed,
@@ -213,12 +219,7 @@ pub struct WalletTransactionBuilder {
 }
 
 impl WalletTransactionBuilder {
-    fn new(
-        user_id: &str,
-        role: &str,
-        transaction_type: TransactionType,
-        amount: Money,
-    ) -> Self {
+    fn new(user_id: &str, role: &str, transaction_type: TransactionType, amount: Money) -> Self {
         Self {
             user_id: Arc::from(user_id),
             role: Arc::from(role),
@@ -373,6 +374,28 @@ impl Wallet {
         Self::validate_positive(amount)?;
         self.active_balance = self.active_balance + amount;
         Ok(self.record(TransactionType::Payout, amount))
+    }
+
+    /// Credits pending sale proceeds to held balance (not withdrawable until settled).
+    pub fn credit_seller_escrow(
+        &mut self,
+        amount: Money,
+    ) -> Result<WalletTransaction, WalletError> {
+        Self::validate_positive(amount)?;
+        self.held_balance = self.held_balance + amount;
+        Ok(self.record(TransactionType::SellerEscrow, amount))
+    }
+
+    /// Moves escrowed sale proceeds from held to active (withdrawable).
+    pub fn settle_seller_escrow(
+        &mut self,
+        amount: Money,
+    ) -> Result<WalletTransaction, WalletError> {
+        Self::validate_positive(amount)?;
+        self.require_held_balance(amount)?;
+        self.held_balance = self.held_balance - amount;
+        self.active_balance = self.active_balance + amount;
+        Ok(self.record(TransactionType::SellerEscrowSettle, amount))
     }
 
     pub fn bid(&mut self, amount: Money) -> Result<WalletTransaction, WalletError> {

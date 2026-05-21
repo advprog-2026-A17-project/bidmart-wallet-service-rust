@@ -26,6 +26,7 @@ pub struct RequestMetrics {
     pub holds_total: AtomicU64,
     pub top_ups_total: AtomicU64,
     pub try_bids_total: AtomicU64,
+    pub payouts_total: AtomicU64,
 }
 
 impl RequestMetrics {
@@ -49,6 +50,7 @@ impl RequestMetrics {
             holds_total: AtomicU64::new(0),
             top_ups_total: AtomicU64::new(0),
             try_bids_total: AtomicU64::new(0),
+            payouts_total: AtomicU64::new(0),
         }
     }
 
@@ -104,6 +106,9 @@ impl RequestMetrics {
             "try_bid" => {
                 self.try_bids_total.fetch_add(1, Ordering::Relaxed);
             }
+            "payout" => {
+                self.payouts_total.fetch_add(1, Ordering::Relaxed);
+            }
             _ => {}
         }
     }
@@ -128,6 +133,7 @@ pub fn render_prometheus_body(uptime_seconds: f64) -> String {
     let holds = METRICS.holds_total.load(Ordering::Relaxed);
     let top_ups = METRICS.top_ups_total.load(Ordering::Relaxed);
     let try_bids = METRICS.try_bids_total.load(Ordering::Relaxed);
+    let payouts = METRICS.payouts_total.load(Ordering::Relaxed);
     let sum_us = METRICS.latency_sum_us.load(Ordering::Relaxed);
     let sum_s = sum_us as f64 / 1_000_000.0;
 
@@ -186,7 +192,8 @@ pub fn render_prometheus_body(uptime_seconds: f64) -> String {
          # TYPE bidmart_wallet_operations_total counter\n\
          bidmart_wallet_operations_total{{service=\"wallet\",operation=\"hold\"}} {holds}\n\
          bidmart_wallet_operations_total{{service=\"wallet\",operation=\"top_up\"}} {top_ups}\n\
-         bidmart_wallet_operations_total{{service=\"wallet\",operation=\"try_bid\"}} {try_bids}\n"
+         bidmart_wallet_operations_total{{service=\"wallet\",operation=\"try_bid\"}} {try_bids}\n\
+         bidmart_wallet_operations_total{{service=\"wallet\",operation=\"payout\"}} {payouts}\n"
     )
 }
 

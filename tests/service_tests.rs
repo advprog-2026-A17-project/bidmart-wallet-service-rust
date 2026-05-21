@@ -1,6 +1,6 @@
 use bidmart_wallet_service_rust::server;
 use bidmart_wallet_service_rust::service::wallet_service::WalletService;
-use bidmart_wallet_service_rust::wallet::Money;
+use bidmart_wallet_service_rust::wallet::{Money, TransactionType};
 
 async fn setup_service() -> WalletService {
     let pool = server::connect_pool("sqlite::memory:").await.unwrap();
@@ -260,4 +260,173 @@ async fn cancel_bid_wrong_user_fails() {
 
     let result = svc.cancel_bid("user-2", "BUYER", &bid_tx.id).await;
     assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn ensure_wallet_returns_existing_wallet_without_duplicate() {
+    let svc = setup_service().await;
+
+    let first = svc.ensure_wallet("user-1", "BUYER").await.unwrap();
+    let second = svc.ensure_wallet("user-1", "BUYER").await.unwrap();
+
+    assert_eq!(first.id(), second.id());
+    assert_eq!(svc.find_all().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn apply_midtrans_payment_result_rejects_unknown_status() {
+    let svc = setup_service().await;
+    svc.create_wallet("user-1", "BUYER").await.unwrap();
+    let payment = svc
+        .create_top_up_intent("user-1", "BUYER", Money::from_cents(5000), None)
+        .await
+        .unwrap();
+
+    let result = svc
+        .apply_midtrans_payment_result(&payment.id, "mystery")
+        .await;
+
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn simulate_payment_status_pending_is_noop() {
+    let svc = setup_service().await;
+    svc.create_wallet("user-1", "BUYER").await.unwrap();
+    let payment = svc
+        .create_top_up_intent("user-1", "BUYER", Money::from_cents(5000), None)
+        .await
+        .unwrap();
+
+    let updated = svc
+        .simulate_payment_status(&payment.id, "PENDING")
+        .await
+        .unwrap();
+    let wallet = svc
+        .find_by_user_id_and_role("user-1", "BUYER")
+        .await
+        .unwrap();
+    let history = svc
+        .get_transaction_history("user-1", "BUYER")
+        .await
+        .unwrap();
+
+    assert_eq!(updated.status, "PENDING");
+    assert_eq!(wallet.active_balance(), Money::zero());
+    assert!(history.is_empty());
+}
+
+#[tokio::test]
+async fn sync_midtrans_payment_status_returns_terminal_payment_without_gateway_call() {
+    let svc = setup_service().await;
+    svc.create_wallet("user-1", "BUYER").await.unwrap();
+    let payment = svc
+        .create_top_up_intent("user-1", "BUYER", Money::from_cents(5000), None)
+        .await
+        .unwrap();
+    svc.simulate_payment_status(&payment.id, "FAILED")
+        .await
+        .unwrap();
+
+    let synced = svc.sync_midtrans_payment_status(&payment.id).await.unwrap();
+
+    assert_eq!(synced.status, "FAILED");
+}
+
+#[tokio::test]
+async fn simulate_withdrawal_completed_does_not_reverse_balance() {
+    let svc = setup_service().await;
+    svc.create_wallet("user-1", "BUYER").await.unwrap();
+    svc.top_up("user-1", "BUYER", Money::from_cents(10_000))
+        .await
+        .unwrap();
+    let withdrawal = svc
+        .create_withdrawal(
+            "user-1",
+            "BUYER",
+            Money::from_cents(3000),
+            "bca",
+            "1234567890",
+        )
+        .await
+        .unwrap();
+
+    let completed = svc
+        .simulate_withdrawal_status(&withdrawal.id, "COMPLETED")
+        .await
+        .unwrap();
+    let wallet = svc
+        .find_by_user_id_and_role("user-1", "BUYER")
+        .await
+        .unwrap();
+
+    assert_eq!(completed.status, "COMPLETED");
+    assert_eq!(wallet.active_balance(), Money::from_cents(7000));
+}
+
+#[tokio::test]
+async fn simulate_withdrawal_expired_reverses_balance_and_records_history() {
+    let svc = setup_service().await;
+    svc.create_wallet("user-1", "BUYER").await.unwrap();
+    svc.top_up("user-1", "BUYER", Money::from_cents(10_000))
+        .await
+        .unwrap();
+    let withdrawal = svc
+        .create_withdrawal(
+            "user-1",
+            "BUYER",
+            Money::from_cents(3000),
+            "bca",
+            "1234567890",
+        )
+        .await
+        .unwrap();
+
+    let expired = svc
+        .simulate_withdrawal_status(&withdrawal.id, "EXPIRED")
+        .await
+        .unwrap();
+    let wallet = svc
+        .find_by_user_id_and_role("user-1", "BUYER")
+        .await
+        .unwrap();
+    let history = svc
+        .get_transaction_history("user-1", "BUYER")
+        .await
+        .unwrap();
+
+    assert_eq!(expired.status, "EXPIRED");
+    assert_eq!(wallet.active_balance(), Money::from_cents(10_000));
+    assert!(
+        history
+            .iter()
+            .any(|tx| tx.transaction_type == TransactionType::WithdrawExpired)
+    );
+}
+
+#[tokio::test]
+async fn create_withdrawal_rejects_zero_amount() {
+    let svc = setup_service().await;
+    svc.create_wallet("user-1", "BUYER").await.unwrap();
+
+    let result = svc
+        .create_withdrawal("user-1", "BUYER", Money::zero(), "bca", "1234567890")
+        .await;
+
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn payout_to_seller_reuses_existing_seller_wallet() {
+    let svc = setup_service().await;
+    let created = svc.create_wallet("seller-1", "SELLER").await.unwrap();
+
+    let paid = svc
+        .payout_to_seller("seller-1", Money::from_cents(4000))
+        .await
+        .unwrap();
+
+    assert_eq!(created.id(), paid.id());
+    assert_eq!(paid.active_balance(), Money::from_cents(4000));
+    assert_eq!(svc.find_all().await.unwrap().len(), 1);
 }

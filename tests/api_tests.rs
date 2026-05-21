@@ -72,7 +72,7 @@ async fn get_wallet_returns_ok() {
 }
 
 #[tokio::test]
-async fn get_wallet_not_found_returns_404() {
+async fn get_wallet_auto_creates_missing_wallet() {
     let app = setup_app().await;
 
     let req = Request::builder()
@@ -80,7 +80,30 @@ async fn get_wallet_not_found_returns_404() {
         .body(Body::empty())
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let json = body_to_json(resp.into_body()).await;
+    assert_eq!(json["userId"], "ghost");
+    assert_eq!(json["role"], "BUYER");
+    assert_eq!(json["activeBalance"], 0);
+    assert_eq!(json["heldBalance"], 0);
+}
+
+#[tokio::test]
+async fn metrics_endpoint_exposes_wallet_service_metrics() {
+    let app = setup_app().await;
+
+    let req = Request::builder()
+        .uri("/metrics")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let body = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(body.contains("bidmart_service_up{service=\"wallet\"} 1"));
+    assert!(body.contains("bidmart_service_uptime_seconds{service=\"wallet\"}"));
 }
 
 // ── POST /api/v1/wallet/{userId}/top-up ──────────────────────────
@@ -356,6 +379,66 @@ async fn midtrans_return_callback_maps_web_sandbox_statuses() {
     assert_eq!(wallet["activeBalance"], 9900);
 }
 
+#[tokio::test]
+async fn payment_detail_rejects_other_user() {
+    let app = setup_app().await;
+
+    let create = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/add")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"userId":"owner"}"#))
+        .unwrap();
+    let _ = app.clone().oneshot(create).await.unwrap();
+
+    let intent = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/owner/top-up/intent")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"amountCents":5000}"#))
+        .unwrap();
+    let intent_resp = app.clone().oneshot(intent).await.unwrap();
+    let intent_json = body_to_json(intent_resp.into_body()).await;
+    let payment_id = intent_json["paymentId"].as_str().unwrap();
+
+    let req = Request::builder()
+        .uri(format!("/api/v1/wallet/intruder/payments/{payment_id}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    let json = body_to_json(resp.into_body()).await;
+    assert_eq!(json["errorCode"], "FORBIDDEN_ACCESS");
+}
+
+#[tokio::test]
+async fn invalid_payment_and_withdrawal_statuses_return_400() {
+    let app = setup_app().await;
+
+    let payment = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/midtrans/payments/missing/simulate")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"status":"BOUNCED"}"#))
+        .unwrap();
+    let payment_resp = app.clone().oneshot(payment).await.unwrap();
+    assert_eq!(payment_resp.status(), StatusCode::BAD_REQUEST);
+    let payment_json = body_to_json(payment_resp.into_body()).await;
+    assert_eq!(payment_json["errorCode"], "INVALID_PAYMENT_STATUS");
+
+    let withdrawal = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/midtrans/withdrawals/missing/simulate")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"status":"BOUNCED"}"#))
+        .unwrap();
+    let withdrawal_resp = app.oneshot(withdrawal).await.unwrap();
+    assert_eq!(withdrawal_resp.status(), StatusCode::BAD_REQUEST);
+    let withdrawal_json = body_to_json(withdrawal_resp.into_body()).await;
+    assert_eq!(withdrawal_json["errorCode"], "INVALID_PAYMENT_STATUS");
+}
+
 // ── POST /api/v1/wallet/hold ─────────────────────────────────────
 
 #[tokio::test]
@@ -411,6 +494,51 @@ async fn hold_funds_returns_updated_balances() {
     assert_eq!(json["amount"], 4000);
 
     // 3. Verifikasi Saldo Wallet
+    let get_req = Request::builder()
+        .uri("/api/v1/wallet/user-1")
+        .body(Body::empty())
+        .unwrap();
+    let get_resp = app.oneshot(get_req).await.unwrap();
+    let get_json = body_to_json(get_resp.into_body()).await;
+    assert_eq!(get_json["activeBalance"], 6000);
+    assert_eq!(get_json["heldBalance"], 4000);
+}
+
+#[tokio::test]
+async fn hold_funds_is_idempotent_for_same_auction_bid() {
+    let app = setup_app().await;
+
+    let create = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/add")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"userId":"user-1"}"#))
+        .unwrap();
+    let _ = app.clone().oneshot(create).await.unwrap();
+
+    let topup = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/user-1/top-up?amount=10000")
+        .body(Body::empty())
+        .unwrap();
+    let _ = app.clone().oneshot(topup).await.unwrap();
+
+    for hold_id in ["hold-original", "hold-duplicate"] {
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/v1/wallet/hold")
+            .header("content-type", "application/json")
+            .header("X-Internal-Service-Token", "local-dev-internal-token")
+            .body(Body::from(format!(
+                r#"{{"userId":"user-1","holdId":"{hold_id}","auctionId":"auc-idem","bidId":"bid-idem","amount":4000,"expiresAt":"2026-12-31T23:59:59Z"}}"#
+            )))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_to_json(resp.into_body()).await;
+        assert_eq!(json["id"], "hold-original");
+    }
+
     let get_req = Request::builder()
         .uri("/api/v1/wallet/user-1")
         .body(Body::empty())
@@ -535,6 +663,28 @@ async fn convert_funds_returns_updated_balances() {
     assert_eq!(get_json["heldBalance"], 0);
 }
 
+#[tokio::test]
+async fn release_and_convert_missing_hold_return_400() {
+    let app = setup_app().await;
+
+    for (uri, body) in [
+        ("/api/v1/wallet/release", r#"{"holdId":"missing"}"#),
+        ("/api/v1/wallet/convert", r#"{"holdId":"missing"}"#),
+    ] {
+        let req = Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("content-type", "application/json")
+            .header("X-Internal-Service-Token", "local-dev-internal-token")
+            .body(Body::from(body))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let json = body_to_json(resp.into_body()).await;
+        assert_eq!(json["errorCode"], "HOLD_OPERATION_FAILED");
+    }
+}
+
 // ── POST /api/v1/wallet/{userId}/withdraw ────────────────────────
 
 #[tokio::test]
@@ -648,6 +798,69 @@ async fn midtrans_failed_withdrawal_reverses_reserved_balance() {
         .map(|entry| entry["type"].as_str().unwrap())
         .collect();
     assert!(types.contains(&"WITHDRAW_FAILED"));
+}
+
+#[tokio::test]
+async fn withdrawal_validation_errors_return_400() {
+    let app = setup_app().await;
+
+    let create = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/add")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"userId":"user-1"}"#))
+        .unwrap();
+    let _ = app.clone().oneshot(create).await.unwrap();
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/user-1/withdrawals")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            r#"{"amountCents":3000,"bankCode":"unknown","accountNumber":"1234567890"}"#,
+        ))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    let json = body_to_json(resp.into_body()).await;
+    assert_eq!(json["errorCode"], "INVALID_PAYMENT_STATUS");
+}
+
+#[tokio::test]
+async fn payout_seller_requires_internal_token_and_creates_seller_wallet() {
+    let app = setup_app().await;
+
+    let forbidden = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/payout")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"sellerId":"seller-1","amountCents":8000}"#))
+        .unwrap();
+    let forbidden_resp = app.clone().oneshot(forbidden).await.unwrap();
+    assert_eq!(forbidden_resp.status(), StatusCode::FORBIDDEN);
+
+    let payout = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/payout")
+        .header("content-type", "application/json")
+        .header("X-Internal-Service-Token", "local-dev-internal-token")
+        .body(Body::from(r#"{"sellerId":"seller-1","amountCents":8000}"#))
+        .unwrap();
+    let payout_resp = app.clone().oneshot(payout).await.unwrap();
+    assert_eq!(payout_resp.status(), StatusCode::OK);
+    let payout_json = body_to_json(payout_resp.into_body()).await;
+    assert_eq!(payout_json["userId"], "seller-1");
+    assert_eq!(payout_json["role"], "SELLER");
+    assert_eq!(payout_json["activeBalance"], 8000);
+
+    let get_seller = Request::builder()
+        .uri("/api/v1/wallet/seller-1?role=SELLER")
+        .body(Body::empty())
+        .unwrap();
+    let get_resp = app.oneshot(get_seller).await.unwrap();
+    let get_json = body_to_json(get_resp.into_body()).await;
+    assert_eq!(get_json["activeBalance"], 8000);
 }
 
 // ── POST /api/v1/wallet/{userId}/trybid ──────────────────────────

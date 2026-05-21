@@ -1,4 +1,4 @@
-openapi: 3.0.3
+﻿openapi: 3.0.3
 info:
   title: BidMart Wallet Service API (Rust)
   version: 1.0.0
@@ -411,17 +411,17 @@ components:
       properties:
         sellerId:
           type: string
-        amountCents:
+        amount:
           type: integer
           format: int64
         orderId:
           type: string
           nullable: true
-      required: [sellerId, amountCents]
+      required: [sellerId, amount]
     PaymentIntentRequest:
       type: object
       properties:
-        amountCents:
+        amount:
           type: integer
           format: int64
         role:
@@ -430,11 +430,11 @@ components:
         paymentMethod:
           type: string
           nullable: true
-      required: [amountCents]
+      required: [amount]
     WithdrawalRequest:
       type: object
       properties:
-        amountCents:
+        amount:
           type: integer
           format: int64
         role:
@@ -444,7 +444,7 @@ components:
           type: string
         accountNumber:
           type: string
-      required: [amountCents, bankCode, accountNumber]
+      required: [amount, bankCode, accountNumber]
     MidtransSimulationRequest:
       type: object
       properties:
@@ -543,7 +543,7 @@ components:
       properties:
         paymentId:
           type: string
-        amountCents:
+        amount:
           type: integer
           format: int64
         role:
@@ -564,13 +564,13 @@ components:
           type: string
         expiresAt:
           type: string
-      required: [paymentId, amountCents, role, status, redirectUrl, createdAt, updatedAt, expiresAt]
+      required: [paymentId, amount, role, status, redirectUrl, createdAt, updatedAt, expiresAt]
     WithdrawalResponse:
       type: object
       properties:
         withdrawalId:
           type: string
-        amountCents:
+        amount:
           type: integer
           format: int64
         role:
@@ -589,7 +589,7 @@ components:
         payoutReference:
           type: string
           nullable: true
-      required: [withdrawalId, amountCents, role, status]
+      required: [withdrawalId, amount, role, status]
     StructuredErrorResponse:
       type: object
       properties:
@@ -597,3 +597,4 @@ components:
           type: string
         message:
           type: string
+

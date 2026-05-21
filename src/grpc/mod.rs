@@ -38,7 +38,7 @@ impl GrpcWalletService for WalletGrpcHandler {
         let auction_id = &req.auction_id;
         let bid_id = &req.bid_id;
         let expires_at = &req.expires_at;
-        let amount = Money::from_cents(req.amount);
+        let amount = Money::from_rupiah(req.amount);
 
         match self.wallet_service
             .hold_funds(user_id, role, auction_id, bid_id, amount, hold_id, expires_at)

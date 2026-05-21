@@ -259,10 +259,7 @@ impl WalletService {
         }
 
         // Facade call — no URL or auth details here
-        let transaction_status = self
-            .midtrans
-            .fetch_transaction_status(payment_id)
-            .await?;
+        let transaction_status = self.midtrans.fetch_transaction_status(payment_id).await?;
 
         let normalized = map_midtrans_transaction_status(&transaction_status)
             .map_err(ServiceError::InvalidPaymentStatus)?;
@@ -352,10 +349,10 @@ impl WalletService {
             return Err(ServiceError::Domain(WalletError::InvalidAmount));
         }
 
-        let bank_code = normalize_bank_code(bank_code)
-            .map_err(ServiceError::InvalidPaymentStatus)?;
-        let account_number = normalize_account_number(account_number)
-            .map_err(ServiceError::InvalidPaymentStatus)?;
+        let bank_code =
+            normalize_bank_code(bank_code).map_err(ServiceError::InvalidPaymentStatus)?;
+        let account_number =
+            normalize_account_number(account_number).map_err(ServiceError::InvalidPaymentStatus)?;
 
         // Facade calls — IRIS API details are hidden inside MidtransGateway
         let validated_account = self
@@ -526,7 +523,7 @@ impl WalletService {
             .map_err(|e| ServiceError::HoldFailed(e))
     }
 
-    pub async fn payout_to_seller(
+    pub async fn credit_seller_escrow(
         &self,
         seller_id: &str,
         amount: Money,
@@ -541,8 +538,38 @@ impl WalletService {
             self.wallet_repo.insert(&wallet).await?;
         }
 
-        self.mutate_wallet(seller_id, "SELLER", |w| w.payout(amount))
+        self.mutate_wallet(seller_id, "SELLER", |w| w.credit_seller_escrow(amount))
             .await
+    }
+
+    /// Settles pending sale proceeds from held to active (used after order confirmation).
+    pub async fn settle_seller_escrow(
+        &self,
+        seller_id: &str,
+        amount: Money,
+    ) -> Result<Wallet, ServiceError> {
+        if self
+            .wallet_repo
+            .find_by_user_id_and_role(seller_id, "SELLER")
+            .await?
+            .is_none()
+        {
+            return Err(ServiceError::WalletNotFound(
+                seller_id.to_string(),
+                "SELLER".to_string(),
+            ));
+        }
+
+        self.mutate_wallet(seller_id, "SELLER", |w| w.settle_seller_escrow(amount))
+            .await
+    }
+
+    pub async fn payout_to_seller(
+        &self,
+        seller_id: &str,
+        amount: Money,
+    ) -> Result<Wallet, ServiceError> {
+        self.settle_seller_escrow(seller_id, amount).await
     }
 
     // ── Provisioning ─────────────────────────────────────────────

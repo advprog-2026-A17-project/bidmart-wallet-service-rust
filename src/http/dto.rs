@@ -46,6 +46,14 @@ pub struct PayoutSellerRequest {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SellerEscrowRequest {
+    pub seller_id: String,
+    pub amount_cents: u64,
+    pub correlation_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct AmountQuery {
     pub amount: u64,
     pub role: Option<String>,

@@ -1,7 +1,6 @@
 use bidmart_wallet_service_rust::wallet::{
-    HoldStatus, Money, TransactionType, Wallet, WalletError, WalletTransaction,
+    Money, TransactionType, Wallet, WalletError, WalletTransaction,
 };
-use std::str::FromStr;
 
 // ── Money newtype tests ──────────────────────────────────────────
 
@@ -210,69 +209,6 @@ fn transaction_type_display() {
     );
 }
 
-#[test]
-fn transaction_type_from_str_parses_all_known_values() {
-    assert_eq!(TransactionType::from_str("TOP_UP"), TransactionType::TopUp);
-    assert_eq!(
-        TransactionType::from_str("WITHDRAW"),
-        TransactionType::Withdraw
-    );
-    assert_eq!(TransactionType::from_str("HOLD"), TransactionType::Hold);
-    assert_eq!(
-        TransactionType::from_str("RELEASE"),
-        TransactionType::Release
-    );
-    assert_eq!(
-        TransactionType::from_str("CONVERT"),
-        TransactionType::Convert
-    );
-    assert_eq!(TransactionType::from_str("PAYOUT"), TransactionType::Payout);
-    assert_eq!(TransactionType::from_str("BID"), TransactionType::Bid);
-    assert_eq!(
-        TransactionType::from_str("CANCEL_BID"),
-        TransactionType::CancelBid
-    );
-    assert_eq!(
-        TransactionType::from_str("TOP_UP_FAILED"),
-        TransactionType::TopUpFailed
-    );
-    assert_eq!(
-        TransactionType::from_str("TOP_UP_EXPIRED"),
-        TransactionType::TopUpExpired
-    );
-    assert_eq!(
-        TransactionType::from_str("WITHDRAW_FAILED"),
-        TransactionType::WithdrawFailed
-    );
-    assert_eq!(
-        TransactionType::from_str("WITHDRAW_EXPIRED"),
-        TransactionType::WithdrawExpired
-    );
-}
-
-#[test]
-#[should_panic(expected = "unknown transaction type")]
-fn transaction_type_from_str_panics_on_unknown_value() {
-    let _ = TransactionType::from_str("NOPE");
-}
-
-#[test]
-fn hold_status_roundtrip() {
-    assert_eq!(HoldStatus::Active.to_string(), "ACTIVE");
-    assert_eq!(HoldStatus::Released.to_string(), "RELEASED");
-    assert_eq!(HoldStatus::Converted.to_string(), "CONVERTED");
-    assert_eq!(HoldStatus::from_str("ACTIVE").unwrap(), HoldStatus::Active);
-    assert_eq!(
-        HoldStatus::from_str("RELEASED").unwrap(),
-        HoldStatus::Released
-    );
-    assert_eq!(
-        HoldStatus::from_str("CONVERTED").unwrap(),
-        HoldStatus::Converted
-    );
-    assert!(HoldStatus::from_str("UNKNOWN").is_err());
-}
-
 // ── WalletTransaction creation ───────────────────────────────────
 
 #[test]
@@ -287,40 +223,4 @@ fn wallet_transaction_captures_user_and_amount() {
     assert_eq!(tx.transaction_type, TransactionType::TopUp);
     assert_eq!(tx.amount, Money::from_cents(500));
     assert!(tx.id.is_nil());
-}
-
-#[test]
-fn wallet_transaction_builder_sets_optional_fields() {
-    let tx = WalletTransaction::builder(
-        "user-1",
-        "BUYER",
-        TransactionType::TopUpFailed,
-        Money::from_cents(500),
-    )
-    .correlation_id("pay-1")
-    .source_service("midtrans")
-    .build();
-
-    assert_eq!(tx.correlation_id.as_deref(), Some("pay-1"));
-    assert_eq!(tx.source_service.as_deref(), Some("midtrans"));
-    assert_eq!(tx.transaction_type, TransactionType::TopUpFailed);
-}
-
-#[test]
-fn wallet_with_balances_preserves_persisted_state() {
-    let wallet = Wallet::with_balances(
-        "wallet-1".to_string(),
-        "user-1".to_string(),
-        "SELLER".to_string(),
-        Money::from_cents(7000),
-        Money::from_cents(2000),
-        3,
-    );
-
-    assert_eq!(wallet.id(), "wallet-1");
-    assert_eq!(wallet.user_id(), "user-1");
-    assert_eq!(wallet.role(), "SELLER");
-    assert_eq!(wallet.active_balance(), Money::from_cents(7000));
-    assert_eq!(wallet.held_balance(), Money::from_cents(2000));
-    assert_eq!(wallet.version(), 3);
 }

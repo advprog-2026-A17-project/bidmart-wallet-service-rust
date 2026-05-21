@@ -28,23 +28,6 @@ perceived latency during active auctions.
 Top-up and withdrawal flows are less suitable for CPU profiling because their
 latency is dominated by Midtrans HTTP calls and payment-provider state.
 
-## How To Run
-
-```bash
-cargo run --release --bin profile_wallet_bidding
-```
-
-The binary uses `pprof` and writes:
-
-```text
-target/profiling/profile_wallet_bidding.svg
-```
-
-`pprof` CPU sampling should be run on Linux/Unix targets. On Windows, use WSL or
-the Linux CI/container environment so the signal-based sampler is available.
-
-The terminal output also reports total runtime, total wallet mutations, and
-average nanoseconds per wallet mutation.
 
 ## Workload
 

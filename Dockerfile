@@ -10,10 +10,8 @@ COPY migrations migrations
 COPY proto proto
 COPY build.rs build.rs
 
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/app/target \
-    cargo build --release --locked \
+# Plain RUN (no BuildKit cache mounts) so Heroku container builds succeed without BuildKit.
+RUN cargo build --release --locked \
     && cp target/release/bidmart-wallet-service-rust ./bidmart-wallet-service-rust
 
 # Reuse the builder base (glibc bookworm) so Compose does not pull debian:bookworm-slim separately.

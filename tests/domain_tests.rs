@@ -219,8 +219,8 @@ fn wallet_transaction_captures_user_and_amount() {
         TransactionType::TopUp,
         Money::from_cents(500),
     );
-    assert_eq!(tx.user_id, "user-1");
+    assert_eq!(tx.user_id.as_ref(), "user-1");
     assert_eq!(tx.transaction_type, TransactionType::TopUp);
     assert_eq!(tx.amount, Money::from_cents(500));
-    assert!(!tx.id.is_empty());
+    assert!(tx.id.is_nil());
 }

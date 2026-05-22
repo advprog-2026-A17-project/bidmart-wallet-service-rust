@@ -1,0 +1,18 @@
+name: Trigger VPS staging deploy
+
+on:
+  push:
+    branches:
+      - staging
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger infrastructure VPS deploy
+        env:
+          GH_TOKEN: ${{ secrets.VPS_DEPLOY_DISPATCH_TOKEN }}
+        run: |
+          test -n "$GH_TOKEN"
+          gh api repos/advprog-2026-A17-project/bidmart-infrastructure/dispatches \
+            -f event_type=deploy-vps-staging

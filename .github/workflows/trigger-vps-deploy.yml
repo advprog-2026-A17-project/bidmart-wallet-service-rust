@@ -1,10 +1,10 @@
 name: Trigger VPS deploy
 
 on:
-  push:
-    branches:
-      - staging
-      - main
+  workflow_run:
+    workflows: ["Continuous Integration"]
+    branches: [staging, main]
+    types: [completed]
   workflow_dispatch:
     inputs:
       target:
@@ -17,37 +17,42 @@ on:
           - prod
 
 concurrency:
-  group: bidmart-wallet-trigger-vps-${{ github.ref }}
+  group: bidmart-wallet-trigger-vps-${{ github.event.workflow_run.head_branch || github.ref }}
   cancel-in-progress: false
 
 jobs:
   dispatch:
     runs-on: ubuntu-latest
-    if: github.repository == 'advprog-2026-A17-project/bidmart-wallet-service-rust'
+    if: github.repository == 'advprog-2026-A17-project/bidmart-wallet-service-rust' && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
     steps:
       - name: Resolve target
         id: resolve
         env:
           INPUT_TARGET: ${{ github.event.inputs.target }}
+          WORKFLOW_RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             target="${INPUT_TARGET:-staging}"
-          elif [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            branch="${{ github.ref_name }}"
+          elif [ "$WORKFLOW_RUN_BRANCH" = "main" ]; then
             target=prod
+            branch="$WORKFLOW_RUN_BRANCH"
           else
             target=staging
+            branch="$WORKFLOW_RUN_BRANCH"
           fi
           if [ "$target" != "prod" ] && [ "$target" != "staging" ]; then
             target=staging
           fi
           echo "target=$target" >> "$GITHUB_OUTPUT"
-          echo "Triggering VPS deploy: $target (ref=${{ github.ref }})"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "Triggering VPS deploy: $target (branch=$branch)"
 
       - name: Trigger infrastructure VPS deploy
         env:
           GH_TOKEN: ${{ secrets.VPS_DEPLOY_DISPATCH_TOKEN }}
           EVENT_TYPE: deploy-vps-${{ steps.resolve.outputs.target }}
-          DEPLOY_BRANCH: ${{ github.ref_name }}
+          DEPLOY_BRANCH: ${{ steps.resolve.outputs.branch }}
         run: |
           if [ -z "$GH_TOKEN" ]; then
             echo "::error::VPS_DEPLOY_DISPATCH_TOKEN is not configured."

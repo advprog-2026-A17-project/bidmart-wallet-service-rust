@@ -53,6 +53,24 @@ fn transaction_id_for_insert(tx: &WalletTransaction) -> String {
     }
 }
 
+async fn insert_wallet_transaction_with_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Any>,
+    wallet_tx: &WalletTransaction,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("INSERT INTO wallet_transactions (id, user_id, role, transaction_type, amount, correlation_id, source_service) VALUES ($1, $2, $3, $4, $5, $6, $7)")
+        .bind(transaction_id_for_insert(wallet_tx))
+        .bind(wallet_tx.user_id.as_ref())
+        .bind(wallet_tx.role.as_ref())
+        .bind(wallet_tx.transaction_type.as_str())
+        .bind(wallet_tx.amount.rupiah() as i64)
+        .bind(&wallet_tx.correlation_id)
+        .bind(&wallet_tx.source_service)
+        .execute(&mut **tx)
+        .await?;
+
+    Ok(())
+}
+
 // ── WalletRepository ────────────────────────────────────────────
 
 pub struct WalletRepository {
@@ -149,7 +167,24 @@ impl WalletRepository {
 
         let mut wallet = wallet_row.map(wallet_from_row).ok_or("Wallet not found")?;
 
-        let wallet_tx = wallet.hold(amount).map_err(|e| e.to_string())?;
+        let active_status = HoldStatus::Active.to_string();
+        let same_auction_hold_sql = format!(
+            "SELECT {HOLD_COLS} FROM holds WHERE wallet_id = $1 AND auction_id = $2 AND status = $3"
+        );
+        let same_auction_holds: Vec<HoldRow> = sqlx::query_as(&same_auction_hold_sql)
+            .bind(wallet_id)
+            .bind(auction_id)
+            .bind(&active_status)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let mut wallet_txs = Vec::with_capacity(same_auction_holds.len() + 1);
+        for hold in &same_auction_holds {
+            let released_amount = Money::from_rupiah(hold.amount as u64);
+            wallet_txs.push(wallet.release(released_amount).map_err(|e| e.to_string())?);
+        }
+        wallet_txs.push(wallet.hold(amount).map_err(|e| e.to_string())?);
 
         let result = sqlx::query("UPDATE wallets SET active_balance = $1, held_balance = $2, version = version + 1 WHERE id = $3 AND version = $4")
             .bind(wallet.active_balance().rupiah() as i64)
@@ -164,17 +199,25 @@ impl WalletRepository {
             return Err("CONCURRENCY_CONFLICT: Wallet is being modified by another operation. Please try again.".to_string());
         }
 
-        sqlx::query("INSERT INTO wallet_transactions (id, user_id, role, transaction_type, amount, correlation_id, source_service) VALUES ($1, $2, $3, $4, $5, $6, $7)")
-            .bind(transaction_id_for_insert(&wallet_tx))
-            .bind(wallet_tx.user_id.as_ref())
-            .bind(wallet_tx.role.as_ref())
-            .bind(wallet_tx.transaction_type.as_str())
-            .bind(wallet_tx.amount.rupiah() as i64)
-            .bind(&wallet_tx.correlation_id)
-            .bind(&wallet_tx.source_service)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| e.to_string())?;
+        for wallet_tx in &wallet_txs {
+            insert_wallet_transaction_with_tx(&mut tx, wallet_tx)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+
+        if !same_auction_holds.is_empty() {
+            let released_status = HoldStatus::Released.to_string();
+            let updated_at = chrono::Utc::now().to_rfc3339();
+            for hold in &same_auction_holds {
+                sqlx::query("UPDATE holds SET status = $1, updated_at = $2 WHERE id = $3")
+                    .bind(&released_status)
+                    .bind(&updated_at)
+                    .bind(&hold.id)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| e.to_string())?;
+            }
+        }
 
         let status_str = HoldStatus::Active.to_string();
         sqlx::query("INSERT INTO holds (id, wallet_id, auction_id, bid_id, amount, status, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7)")
@@ -530,15 +573,15 @@ impl WalletRepository {
                  (id, user_id, role, transaction_type, amount, correlation_id, source_service) \
                  VALUES ($1, $2, $3, $4, $5, $6, $7)",
             )
-                .bind(transaction_id_for_insert(&wallet_tx))
-                .bind(wallet_tx.user_id.as_ref())
-                .bind(wallet_tx.role.as_ref())
-                .bind(wallet_tx.transaction_type.as_str())
-                .bind(wallet_tx.amount.rupiah() as i64)
-                .bind(&wallet_tx.correlation_id)
-                .bind(&wallet_tx.source_service)
-                .execute(&mut *tx)
-                .await?;
+            .bind(transaction_id_for_insert(&wallet_tx))
+            .bind(wallet_tx.user_id.as_ref())
+            .bind(wallet_tx.role.as_ref())
+            .bind(wallet_tx.transaction_type.as_str())
+            .bind(wallet_tx.amount.rupiah() as i64)
+            .bind(&wallet_tx.correlation_id)
+            .bind(&wallet_tx.source_service)
+            .execute(&mut *tx)
+            .await?;
         }
 
         tx.commit().await?;

@@ -67,6 +67,86 @@ async fn update_wallet_balances() {
 }
 
 #[tokio::test]
+async fn hold_funds_reuses_same_auction_hold_when_replacing_bid() {
+    let pool = setup_pool().await;
+    let repo = WalletRepository::new(pool.clone());
+
+    let mut wallet = Wallet::new("buyer-1", "BUYER");
+    repo.insert(&wallet).await.unwrap();
+    wallet.top_up(Money::from_rupiah(300_000)).unwrap();
+    repo.update(&wallet).await.unwrap();
+
+    let expires_at = "2099-12-31T23:59:59Z";
+    repo.hold_funds(
+        wallet.id(),
+        "auction-a",
+        "bid-a-1",
+        Money::from_rupiah(5_000),
+        "hold-a-1",
+        expires_at,
+    )
+    .await
+    .unwrap();
+    repo.hold_funds(
+        wallet.id(),
+        "auction-b",
+        "bid-b-1",
+        Money::from_rupiah(10_000),
+        "hold-b-1",
+        expires_at,
+    )
+    .await
+    .unwrap();
+
+    let replaced = repo
+        .hold_funds(
+            wallet.id(),
+            "auction-a",
+            "bid-a-2",
+            Money::from_rupiah(290_000),
+            "hold-a-2",
+            expires_at,
+        )
+        .await
+        .unwrap();
+    assert_eq!(replaced.amount, 290_000);
+
+    let found = repo
+        .find_by_user_id_and_role("buyer-1", "BUYER")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(found.active_balance(), Money::zero());
+    assert_eq!(found.held_balance(), Money::from_rupiah(300_000));
+
+    let old_a_status: String = sqlx::query_scalar("SELECT status FROM holds WHERE id = $1")
+        .bind("hold-a-1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let auction_b_status: String = sqlx::query_scalar("SELECT status FROM holds WHERE id = $1")
+        .bind("hold-b-1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(old_a_status, "RELEASED");
+    assert_eq!(auction_b_status, "ACTIVE");
+
+    let err = repo
+        .hold_funds(
+            wallet.id(),
+            "auction-a",
+            "bid-a-3",
+            Money::from_rupiah(290_001),
+            "hold-a-3",
+            expires_at,
+        )
+        .await
+        .unwrap_err();
+    assert!(err.contains("insufficient active balance"));
+}
+
+#[tokio::test]
 async fn find_all_wallets() {
     let pool = setup_pool().await;
     let repo = WalletRepository::new(pool);

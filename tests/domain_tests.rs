@@ -171,22 +171,22 @@ fn convert_zero_fails() {
 }
 
 #[test]
-fn seller_payout_release_moves_held_to_active() {
+fn seller_escrow_settle_moves_held_to_active() {
     let mut w = Wallet::new("seller-1", "SELLER");
     w.credit_seller_escrow(Money::from_cents(7500)).unwrap();
-    let tx = w.release_seller_payout(Money::from_cents(7500)).unwrap();
+    let tx = w.settle_seller_escrow(Money::from_cents(7500)).unwrap();
     assert_eq!(w.held_balance(), Money::zero());
     assert_eq!(w.active_balance(), Money::from_cents(7500));
     assert_eq!(tx.transaction_type, TransactionType::SellerEscrowSettle);
 }
 
 #[test]
-fn seller_payout_release_credits_active_when_escrow_was_missing() {
+fn seller_escrow_settle_requires_held_balance() {
     let mut w = Wallet::new("seller-1", "SELLER");
-    let tx = w.release_seller_payout(Money::from_cents(7500)).unwrap();
+    let result = w.settle_seller_escrow(Money::from_cents(7500));
     assert_eq!(w.held_balance(), Money::zero());
-    assert_eq!(w.active_balance(), Money::from_cents(7500));
-    assert_eq!(tx.transaction_type, TransactionType::SellerEscrowSettle);
+    assert_eq!(w.active_balance(), Money::zero());
+    assert_eq!(result, Err(WalletError::InsufficientHeldBalance));
 }
 
 // ── Bid (hold variant) tests ─────────────────────────────────────

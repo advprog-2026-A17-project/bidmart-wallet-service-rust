@@ -406,23 +406,6 @@ impl Wallet {
         Ok(self.record(TransactionType::SellerEscrowSettle, amount))
     }
 
-    /// Completes an order payout by moving any available seller hold to active
-    /// and crediting the released payout amount to the seller's active balance.
-    pub fn release_seller_payout(
-        &mut self,
-        amount: Money,
-    ) -> Result<WalletTransaction, WalletError> {
-        Self::validate_positive(amount)?;
-        let held_to_release = if self.held_balance < amount {
-            self.held_balance
-        } else {
-            amount
-        };
-        self.held_balance = self.held_balance - held_to_release;
-        self.active_balance = self.active_balance + amount;
-        Ok(self.record(TransactionType::SellerEscrowSettle, amount))
-    }
-
     pub fn bid(&mut self, amount: Money) -> Result<WalletTransaction, WalletError> {
         Self::validate_positive(amount)?;
         self.require_active_balance(amount)?;

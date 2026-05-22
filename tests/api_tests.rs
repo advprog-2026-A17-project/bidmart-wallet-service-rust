@@ -935,6 +935,21 @@ async fn seller_escrow_credit_and_payout_settlement_moves_held_to_active() {
     assert_eq!(escrow_json["heldBalance"], 7500);
     assert_eq!(escrow_json["activeBalance"], 0);
 
+    let detail = Request::builder()
+        .method("GET")
+        .uri("/api/v1/wallet/seller-1/detail?role=SELLER")
+        .body(Body::empty())
+        .unwrap();
+    let detail_resp = app.clone().oneshot(detail).await.unwrap();
+    assert_eq!(detail_resp.status(), StatusCode::OK);
+    let detail_json = body_to_json(detail_resp.into_body()).await;
+    let history = detail_json["history"].as_array().unwrap();
+    assert!(history.iter().any(|entry| {
+        entry["type"] == "SELLER_ESCROW"
+            && entry["amount"] == 7500
+            && entry["correlationId"] == "auction-1"
+    }));
+
     let payout = Request::builder()
         .method("POST")
         .uri("/api/v1/wallet/payout")
@@ -949,11 +964,36 @@ async fn seller_escrow_credit_and_payout_settlement_moves_held_to_active() {
     let payout_json = body_to_json(payout_resp.into_body()).await;
     assert_eq!(payout_json["heldBalance"], 0);
     assert_eq!(payout_json["activeBalance"], 7500);
+
+    let duplicate = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/payout")
+        .header("content-type", "application/json")
+        .header("X-Internal-Service-Token", "bidmart-local-internal-token")
+        .body(Body::from(
+            r#"{"sellerId":"seller-1","amount":7500,"orderId":"order-1"}"#,
+        ))
+        .unwrap();
+    let duplicate_resp = app.clone().oneshot(duplicate).await.unwrap();
+    assert_eq!(duplicate_resp.status(), StatusCode::OK);
+    let duplicate_json = body_to_json(duplicate_resp.into_body()).await;
+    assert_eq!(duplicate_json["heldBalance"], 0);
+    assert_eq!(duplicate_json["activeBalance"], 7500);
 }
 
 #[tokio::test]
-async fn seller_payout_credits_active_balance_when_escrow_is_missing() {
+async fn seller_payout_requires_existing_held_escrow() {
     let app = setup_app().await;
+
+    let create = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/add")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            r#"{"userId":"seller-missing-escrow","role":"SELLER"}"#,
+        ))
+        .unwrap();
+    let _ = app.clone().oneshot(create).await.unwrap();
 
     let payout = Request::builder()
         .method("POST")
@@ -965,25 +1005,18 @@ async fn seller_payout_credits_active_balance_when_escrow_is_missing() {
         ))
         .unwrap();
     let payout_resp = app.clone().oneshot(payout).await.unwrap();
-    assert_eq!(payout_resp.status(), StatusCode::OK);
-    let payout_json = body_to_json(payout_resp.into_body()).await;
-    assert_eq!(payout_json["heldBalance"], 0);
-    assert_eq!(payout_json["activeBalance"], 7500);
+    assert_eq!(payout_resp.status(), StatusCode::BAD_REQUEST);
 
-    let duplicate = Request::builder()
-        .method("POST")
-        .uri("/api/v1/wallet/payout")
-        .header("content-type", "application/json")
-        .header("X-Internal-Service-Token", "bidmart-local-internal-token")
-        .body(Body::from(
-            r#"{"sellerId":"seller-missing-escrow","amount":7500,"orderId":"order-missing-escrow"}"#,
-        ))
+    let get = Request::builder()
+        .method("GET")
+        .uri("/api/v1/wallet/seller-missing-escrow?role=SELLER")
+        .body(Body::empty())
         .unwrap();
-    let duplicate_resp = app.clone().oneshot(duplicate).await.unwrap();
-    assert_eq!(duplicate_resp.status(), StatusCode::OK);
-    let duplicate_json = body_to_json(duplicate_resp.into_body()).await;
-    assert_eq!(duplicate_json["heldBalance"], 0);
-    assert_eq!(duplicate_json["activeBalance"], 7500);
+    let get_resp = app.clone().oneshot(get).await.unwrap();
+    assert_eq!(get_resp.status(), StatusCode::OK);
+    let wallet_json = body_to_json(get_resp.into_body()).await;
+    assert_eq!(wallet_json["heldBalance"], 0);
+    assert_eq!(wallet_json["activeBalance"], 0);
 }
 
 #[tokio::test]

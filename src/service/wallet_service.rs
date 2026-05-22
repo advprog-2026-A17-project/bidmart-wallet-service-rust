@@ -623,16 +623,18 @@ impl WalletService {
         amount: Money,
         order_id: Option<&str>,
     ) -> Result<Wallet, ServiceError> {
-        let wallet = if let Some(wallet) = self
+        let wallet = match self
             .wallet_repo
             .find_by_user_id_and_role(seller_id, "SELLER")
             .await?
         {
-            wallet
-        } else {
-            let wallet = Wallet::new(seller_id, "SELLER");
-            self.wallet_repo.insert(&wallet).await?;
-            wallet
+            Some(wallet) => wallet,
+            None => {
+                return Err(ServiceError::WalletNotFound(
+                    seller_id.to_string(),
+                    "SELLER".to_string(),
+                ));
+            }
         };
 
         let order_id = normalized_correlation_id(order_id);
@@ -656,7 +658,7 @@ impl WalletService {
             "SELLER",
             order_id,
             Some(ORDER_SERVICE_SOURCE),
-            |w| w.release_seller_payout(amount),
+            |w| w.settle_seller_escrow(amount),
         )
         .await
     }

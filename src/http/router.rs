@@ -92,16 +92,24 @@ async fn get_wallet_detail(
         Err(e) => return Err(map_error(e)),
     };
 
+    let unpaid_payments = match svc.get_unpaid_payment_intents(&user_id).await {
+        Ok(payments) => crate::service::wallet_service::filter_unpaid_without_settled_top_up(
+            payments,
+            &history,
+        ),
+        Err(e) => return Err(map_error(e)),
+    };
+
     Ok(Json(WalletDetailResponse {
         wallet: WalletResponse::from(&wallet),
         history: history
             .iter()
             .map(WalletTransactionResponse::from)
             .collect(),
-        unpaid_payments: match svc.get_unpaid_payment_intents(&user_id).await {
-            Ok(payments) => payments.iter().map(PaymentIntentResponse::from).collect(),
-            Err(e) => return Err(map_error(e)),
-        },
+        unpaid_payments: unpaid_payments
+            .iter()
+            .map(PaymentIntentResponse::from)
+            .collect(),
     }))
 }
 

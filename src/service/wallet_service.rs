@@ -111,7 +111,8 @@ impl WalletService {
         user_id: &str,
         role: &str,
     ) -> Result<Vec<WalletTransaction>, ServiceError> {
-        Ok(self.tx_repo.find_by_user_id_and_role(user_id, role).await?)
+        let history = self.tx_repo.find_by_user_id_and_role(user_id, role).await?;
+        Ok(dedupe_top_up_history(history))
     }
 
     pub async fn get_unpaid_payment_intents(
@@ -698,6 +699,38 @@ impl WalletService {
 }
 
 // ── Helpers (payment expiry) ────────────────────────────────────
+
+/// Keeps the newest TOP_UP row per Midtrans payment id (history is newest-first).
+fn dedupe_top_up_history(history: Vec<WalletTransaction>) -> Vec<WalletTransaction> {
+    let mut seen_top_up_correlations = std::collections::HashSet::new();
+    history
+        .into_iter()
+        .filter(|tx| {
+            if tx.transaction_type != TransactionType::TopUp {
+                return true;
+            }
+            let Some(correlation_id) = tx.correlation_id.as_ref() else {
+                return true;
+            };
+            seen_top_up_correlations.insert(correlation_id.clone())
+        })
+        .collect()
+}
+
+pub fn filter_unpaid_without_settled_top_up(
+    unpaid: Vec<PaymentIntent>,
+    history: &[WalletTransaction],
+) -> Vec<PaymentIntent> {
+    let settled: std::collections::HashSet<String> = history
+        .iter()
+        .filter(|tx| tx.transaction_type == TransactionType::TopUp)
+        .filter_map(|tx| tx.correlation_id.clone())
+        .collect();
+    unpaid
+        .into_iter()
+        .filter(|payment| !settled.contains(&payment.id))
+        .collect()
+}
 
 const PAYMENT_EXPIRY_MINUTES: i64 = 10;
 

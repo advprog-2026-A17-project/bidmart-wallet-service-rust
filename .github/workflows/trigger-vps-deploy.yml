@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - staging
+      - main
   workflow_dispatch:
     inputs:
       target:
@@ -16,7 +17,7 @@ on:
           - prod
 
 concurrency:
-  group: bidmart-wallet-trigger-vps
+  group: bidmart-wallet-trigger-vps-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -29,21 +30,29 @@ jobs:
         env:
           INPUT_TARGET: ${{ github.event.inputs.target }}
         run: |
-          target="${INPUT_TARGET:-staging}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            target="${INPUT_TARGET:-staging}"
+          elif [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            target=prod
+          else
+            target=staging
+          fi
           if [ "$target" != "prod" ] && [ "$target" != "staging" ]; then
             target=staging
           fi
           echo "target=$target" >> "$GITHUB_OUTPUT"
-          echo "Triggering VPS deploy: $target"
+          echo "Triggering VPS deploy: $target (ref=${{ github.ref }})"
 
       - name: Trigger infrastructure VPS deploy
         env:
           GH_TOKEN: ${{ secrets.VPS_DEPLOY_DISPATCH_TOKEN }}
           EVENT_TYPE: deploy-vps-${{ steps.resolve.outputs.target }}
+          DEPLOY_BRANCH: ${{ github.ref_name }}
         run: |
           if [ -z "$GH_TOKEN" ]; then
             echo "::error::VPS_DEPLOY_DISPATCH_TOKEN is not configured."
             exit 1
           fi
           gh api repos/advprog-2026-A17-project/bidmart-infrastructure/dispatches \
-            -f event_type="$EVENT_TYPE"
+            -f event_type="$EVENT_TYPE" \
+            -f "client_payload[branch]=$DEPLOY_BRANCH"

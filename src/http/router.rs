@@ -9,6 +9,7 @@ use axum::{Json, Router};
 
 use crate::http::dto::*;
 use crate::http::metrics::{self, METRICS};
+use crate::http::metrics_auth::require_metrics_basic_auth;
 use crate::service::wallet_service::{ServiceError, WalletService};
 use crate::wallet::{Money, WalletError};
 
@@ -46,7 +47,7 @@ pub fn create_router(service: WalletService) -> Router {
         .with_state(state);
 
     Router::new()
-        .route("/metrics", get(metrics))
+        .route("/metrics", get(metrics).layer(from_fn(require_metrics_basic_auth)))
         .nest("/api/v1/wallet", wallet_routes)
         .layer(from_fn(metrics::record_http_metrics))
 }

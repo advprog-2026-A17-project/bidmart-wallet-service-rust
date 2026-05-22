@@ -196,13 +196,27 @@ impl WalletService {
         role: &str,
         amount: Money,
         payment_method: Option<&str>,
+        idempotency_key: Option<&str>,
     ) -> Result<PaymentIntent, ServiceError> {
         if amount.is_zero() {
             return Err(ServiceError::Domain(WalletError::InvalidAmount));
         }
         self.find_by_user_id_and_role(user_id, role).await?;
+        let idempotency_key = normalize_idempotency_key(idempotency_key);
+        if let Some(key) = idempotency_key.as_deref() {
+            if let Some(existing) = self
+                .wallet_repo
+                .find_payment_intent_by_idempotency_key(user_id, role, key)
+                .await?
+            {
+                return Ok(existing);
+            }
+        }
 
-        let payment_id = uuid::Uuid::new_v4().to_string();
+        let payment_id = idempotency_key
+            .as_deref()
+            .map(|key| idempotent_operation_id("pay", user_id, role, key))
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
         // Facade call — no HTTP details here
         let page = self
@@ -210,7 +224,7 @@ impl WalletService {
             .create_payment(&payment_id, amount, payment_method)
             .await?;
 
-        Ok(self
+        match self
             .wallet_repo
             .insert_payment_intent(
                 &payment_id,
@@ -220,8 +234,24 @@ impl WalletService {
                 &page.redirect_url,
                 page.va_number.as_deref(),
                 page.payment_channel.as_deref(),
+                idempotency_key.as_deref(),
             )
-            .await?)
+            .await
+        {
+            Ok(payment) => Ok(payment),
+            Err(error) => {
+                if let Some(key) = idempotency_key.as_deref() {
+                    if let Some(existing) = self
+                        .wallet_repo
+                        .find_payment_intent_by_idempotency_key(user_id, role, key)
+                        .await?
+                    {
+                        return Ok(existing);
+                    }
+                }
+                Err(ServiceError::Persistence(error))
+            }
+        }
     }
 
     pub async fn simulate_payment_status(
@@ -275,54 +305,15 @@ impl WalletService {
             return Err(ServiceError::InvalidPaymentStatus(normalized.to_string()));
         }
 
-        let payment = self
-            .wallet_repo
-            .find_payment_intent(payment_id)
-            .await?
-            .ok_or_else(|| ServiceError::TransactionNotFound(payment_id.to_string()))?;
-
-        if payment.status == "PENDING" && normalized != "PENDING" {
-            match normalized {
-                "PAID" => {
-                    self.top_up(
-                        &payment.user_id,
-                        &payment.role,
-                        Money::from_rupiah(payment.amount as u64),
-                    )
-                    .await?;
-                }
-                "FAILED" => {
-                    // Builder Pattern — atomic construction with optional fields
-                    self.record_status_transaction(
-                        &payment.user_id,
-                        &payment.role,
-                        TransactionType::TopUpFailed,
-                        Money::from_rupiah(payment.amount as u64),
-                        payment_id,
-                    )
-                    .await?;
-                }
-                "EXPIRED" => {
-                    self.record_status_transaction(
-                        &payment.user_id,
-                        &payment.role,
-                        TransactionType::TopUpExpired,
-                        Money::from_rupiah(payment.amount as u64),
-                        payment_id,
-                    )
-                    .await?;
-                }
-                _ => {}
-            }
-            self.wallet_repo
-                .update_payment_status(payment_id, normalized)
-                .await?;
-        }
-
         self.wallet_repo
-            .find_payment_intent(payment_id)
-            .await?
-            .ok_or_else(|| ServiceError::TransactionNotFound(payment_id.to_string()))
+            .apply_payment_status(payment_id, normalized)
+            .await
+            .map_err(|e| match e {
+                sqlx::Error::RowNotFound => {
+                    ServiceError::TransactionNotFound(payment_id.to_string())
+                }
+                other => ServiceError::Persistence(other),
+            })
     }
 
     async fn expire_payment_if_needed(
@@ -344,9 +335,20 @@ impl WalletService {
         amount: Money,
         bank_code: &str,
         account_number: &str,
+        idempotency_key: Option<&str>,
     ) -> Result<WalletWithdrawal, ServiceError> {
         if amount.is_zero() {
             return Err(ServiceError::Domain(WalletError::InvalidAmount));
+        }
+        let idempotency_key = normalize_idempotency_key(idempotency_key);
+        if let Some(key) = idempotency_key.as_deref() {
+            if let Some(existing) = self
+                .wallet_repo
+                .find_withdrawal_by_idempotency_key(user_id, role, key)
+                .await?
+            {
+                return Ok(existing);
+            }
         }
 
         let bank_code =
@@ -372,9 +374,14 @@ impl WalletService {
         }
 
         self.withdraw(user_id, role, amount).await?;
-        Ok(self
+        let withdrawal_id = idempotency_key
+            .as_deref()
+            .map(|key| idempotent_operation_id("wd", user_id, role, key))
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        match self
             .wallet_repo
             .insert_withdrawal(
+                &withdrawal_id,
                 user_id,
                 role,
                 amount,
@@ -382,8 +389,25 @@ impl WalletService {
                 &validated_account.account_number,
                 &validated_account.account_name,
                 &payout.reference_no,
+                idempotency_key.as_deref(),
             )
-            .await?)
+            .await
+        {
+            Ok(withdrawal) => Ok(withdrawal),
+            Err(error) => {
+                if let Some(key) = idempotency_key.as_deref() {
+                    if let Some(existing) = self
+                        .wallet_repo
+                        .find_withdrawal_by_idempotency_key(user_id, role, key)
+                        .await?
+                    {
+                        let _ = self.top_up(user_id, role, amount).await;
+                        return Ok(existing);
+                    }
+                }
+                Err(ServiceError::Persistence(error))
+            }
+        }
     }
 
     pub async fn simulate_withdrawal_status(
@@ -689,6 +713,22 @@ fn payment_is_expired(created_at: &str) -> bool {
             chrono::Utc::now() >= created + chrono::Duration::minutes(PAYMENT_EXPIRY_MINUTES)
         })
         .unwrap_or(false)
+}
+
+fn normalize_idempotency_key(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.chars().take(128).collect())
+}
+
+fn idempotent_operation_id(prefix: &str, user_id: &str, role: &str, key: &str) -> String {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in format!("{user_id}:{role}:{key}").bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{prefix}-{hash:016x}")
 }
 
 fn parse_payment_created_at(created_at: &str) -> Option<chrono::DateTime<chrono::Utc>> {

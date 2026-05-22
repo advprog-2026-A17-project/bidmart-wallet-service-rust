@@ -48,21 +48,27 @@ CREATE INDEX IF NOT EXISTS idx_holds_wallet ON holds(wallet_id);
 CREATE TABLE IF NOT EXISTS wallet_payment_intents (
     id           TEXT PRIMARY KEY,
     user_id      TEXT NOT NULL,
+    role         TEXT NOT NULL DEFAULT 'BUYER',
     amount INTEGER NOT NULL CHECK (amount >= 0),
     status       TEXT NOT NULL,
     redirect_url TEXT NOT NULL,
     va_number    TEXT,
     payment_channel TEXT,
+    idempotency_key TEXT,
     created_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_wallet_payment_intents_user_id
     ON wallet_payment_intents(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_wallet_payment_intents_idempotency
+    ON wallet_payment_intents(user_id, role, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS wallet_withdrawals (
     id           TEXT PRIMARY KEY,
     user_id      TEXT NOT NULL,
+    role         TEXT NOT NULL DEFAULT 'BUYER',
     amount INTEGER NOT NULL CHECK (amount >= 0),
     bank_account TEXT NOT NULL,
     bank_code    TEXT,
@@ -70,6 +76,7 @@ CREATE TABLE IF NOT EXISTS wallet_withdrawals (
     account_name TEXT,
     payout_reference TEXT,
     failure_reason TEXT,
+    idempotency_key TEXT,
     status       TEXT NOT NULL,
     created_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -77,3 +84,6 @@ CREATE TABLE IF NOT EXISTS wallet_withdrawals (
 
 CREATE INDEX IF NOT EXISTS idx_wallet_withdrawals_user_id
     ON wallet_withdrawals(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_wallet_withdrawals_idempotency
+    ON wallet_withdrawals(user_id, role, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;

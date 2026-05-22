@@ -41,6 +41,7 @@ pub async fn run_migrations(pool: &AnyPool) -> Result<(), sqlx::Error> {
     ensure_non_negative_constraints(pool).await;
     ensure_payment_intent_columns(pool).await;
     ensure_withdrawal_columns(pool).await;
+    ensure_idempotency_columns(pool).await;
     Ok(())
 }
 
@@ -105,6 +106,19 @@ async fn ensure_withdrawal_columns(pool: &AnyPool) {
         "ALTER TABLE wallet_withdrawals ADD COLUMN account_name TEXT",
         "ALTER TABLE wallet_withdrawals ADD COLUMN payout_reference TEXT",
         "ALTER TABLE wallet_withdrawals ADD COLUMN failure_reason TEXT",
+    ];
+
+    for statement in statements {
+        let _ = sqlx::query(statement).execute(pool).await;
+    }
+}
+
+async fn ensure_idempotency_columns(pool: &AnyPool) {
+    let statements = [
+        "ALTER TABLE wallet_payment_intents ADD COLUMN idempotency_key TEXT",
+        "ALTER TABLE wallet_withdrawals ADD COLUMN idempotency_key TEXT",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_wallet_payment_intents_idempotency ON wallet_payment_intents(user_id, role, idempotency_key) WHERE idempotency_key IS NOT NULL",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_wallet_withdrawals_idempotency ON wallet_withdrawals(user_id, role, idempotency_key) WHERE idempotency_key IS NOT NULL",
     ];
 
     for statement in statements {

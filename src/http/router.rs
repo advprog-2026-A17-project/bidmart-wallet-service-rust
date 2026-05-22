@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use axum::extract::{Path, Query, State};
-use axum::middleware::from_fn;
 use axum::http::{HeaderMap, StatusCode};
+use axum::middleware::from_fn;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -47,7 +47,10 @@ pub fn create_router(service: WalletService) -> Router {
         .with_state(state);
 
     Router::new()
-        .route("/metrics", get(metrics).layer(from_fn(require_metrics_basic_auth)))
+        .route(
+            "/metrics",
+            get(metrics).layer(from_fn(require_metrics_basic_auth)),
+        )
         .nest("/api/v1/wallet", wallet_routes)
         .layer(from_fn(metrics::record_http_metrics))
 }
@@ -143,16 +146,19 @@ async fn top_up(
 
 async fn create_top_up_intent(
     State(svc): State<AppState>,
+    headers: HeaderMap,
     Path(user_id): Path<String>,
     Json(req): Json<PaymentIntentRequest>,
 ) -> impl IntoResponse {
     let role = req.role.as_deref().unwrap_or("BUYER");
+    let idempotency_key = idempotency_key(&headers);
     match svc
         .create_top_up_intent(
             &user_id,
             role,
             Money::from_rupiah(req.amount),
             req.payment_method.as_deref(),
+            idempotency_key.as_deref(),
         )
         .await
     {
@@ -311,10 +317,12 @@ async fn withdraw(
 
 async fn create_withdrawal(
     State(svc): State<AppState>,
+    headers: HeaderMap,
     Path(user_id): Path<String>,
     Json(req): Json<WithdrawalRequest>,
 ) -> impl IntoResponse {
     let role = req.role.as_deref().unwrap_or("BUYER");
+    let idempotency_key = idempotency_key(&headers);
     match svc
         .create_withdrawal(
             &user_id,
@@ -322,6 +330,7 @@ async fn create_withdrawal(
             Money::from_rupiah(req.amount),
             &req.bank_code,
             &req.account_number,
+            idempotency_key.as_deref(),
         )
         .await
     {
@@ -369,6 +378,15 @@ fn require_internal_token(
             message: "invalid internal service token".to_string(),
         }),
     ))
+}
+
+fn idempotency_key(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("idempotency-key")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn map_error(e: ServiceError) -> (StatusCode, Json<StructuredErrorResponse>) {

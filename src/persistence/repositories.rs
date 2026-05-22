@@ -364,10 +364,11 @@ impl WalletRepository {
         redirect_url: &str,
         va_number: Option<&str>,
         payment_channel: Option<&str>,
+        idempotency_key: Option<&str>,
     ) -> Result<PaymentIntent, sqlx::Error> {
         let now = chrono::Utc::now().to_rfc3339();
         sqlx::query(
-            "INSERT INTO wallet_payment_intents (id, user_id, role, amount, status, redirect_url, va_number, payment_channel, created_at, updated_at) VALUES ($1, $2, $3, $4, 'PENDING', $5, $6, $7, $8, $8)",
+            "INSERT INTO wallet_payment_intents (id, user_id, role, amount, status, redirect_url, va_number, payment_channel, idempotency_key, created_at, updated_at) VALUES ($1, $2, $3, $4, 'PENDING', $5, $6, $7, $8, $9, $9)",
         )
         .bind(payment_id)
         .bind(user_id)
@@ -376,6 +377,7 @@ impl WalletRepository {
         .bind(redirect_url)
         .bind(va_number)
         .bind(payment_channel)
+        .bind(idempotency_key)
         .bind(now)
         .execute(&self.pool)
         .await?;
@@ -383,6 +385,25 @@ impl WalletRepository {
         self.find_payment_intent(payment_id)
             .await?
             .ok_or(sqlx::Error::RowNotFound)
+    }
+
+    pub async fn find_payment_intent_by_idempotency_key(
+        &self,
+        user_id: &str,
+        role: &str,
+        idempotency_key: &str,
+    ) -> Result<Option<PaymentIntent>, sqlx::Error> {
+        let sql = format!(
+            "SELECT {PAYMENT_COLS} FROM wallet_payment_intents WHERE user_id = $1 AND role = $2 AND idempotency_key = $3"
+        );
+        let row: Option<PaymentIntentRow> = sqlx::query_as(&sql)
+            .bind(user_id)
+            .bind(role)
+            .bind(idempotency_key)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        Ok(row.map(PaymentIntent::from))
     }
 
     pub async fn find_payment_intent(
@@ -528,6 +549,7 @@ impl WalletRepository {
 
     pub async fn insert_withdrawal(
         &self,
+        withdrawal_id: &str,
         user_id: &str,
         role: &str,
         amount: Money,
@@ -535,12 +557,12 @@ impl WalletRepository {
         account_number: &str,
         account_name: &str,
         payout_reference: &str,
+        idempotency_key: Option<&str>,
     ) -> Result<WalletWithdrawal, sqlx::Error> {
-        let withdrawal_id = uuid::Uuid::new_v4().to_string();
         sqlx::query(
-            "INSERT INTO wallet_withdrawals (id, user_id, role, amount, bank_account, bank_code, account_number, account_name, payout_reference, status) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'PENDING')",
+            "INSERT INTO wallet_withdrawals (id, user_id, role, amount, bank_account, bank_code, account_number, account_name, payout_reference, idempotency_key, status) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'PENDING')",
         )
-        .bind(&withdrawal_id)
+        .bind(withdrawal_id)
         .bind(user_id)
         .bind(role)
         .bind(amount.rupiah() as i64)
@@ -549,12 +571,32 @@ impl WalletRepository {
         .bind(account_number)
         .bind(account_name)
         .bind(payout_reference)
+        .bind(idempotency_key)
         .execute(&self.pool)
         .await?;
 
         self.find_withdrawal(&withdrawal_id)
             .await?
             .ok_or(sqlx::Error::RowNotFound)
+    }
+
+    pub async fn find_withdrawal_by_idempotency_key(
+        &self,
+        user_id: &str,
+        role: &str,
+        idempotency_key: &str,
+    ) -> Result<Option<WalletWithdrawal>, sqlx::Error> {
+        let sql = format!(
+            "SELECT {WITHDRAWAL_COLS} FROM wallet_withdrawals WHERE user_id = $1 AND role = $2 AND idempotency_key = $3"
+        );
+        let row: Option<WithdrawalRow> = sqlx::query_as(&sql)
+            .bind(user_id)
+            .bind(role)
+            .bind(idempotency_key)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        Ok(row.map(WalletWithdrawal::from))
     }
 
     pub async fn find_withdrawal(

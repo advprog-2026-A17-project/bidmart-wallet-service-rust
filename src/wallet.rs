@@ -1,28 +1,38 @@
 use std::fmt;
 use std::ops::{Add, Sub};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use uuid::Uuid;
 
 // ── Money ────────────────────────────────────────────────────────
 
-/// Monetary value stored as whole cents to avoid floating-point precision issues.
+/// Monetary value stored as whole rupiah.
 ///
 /// This is a value object — immutable, comparable, and safe for arithmetic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Money(u64);
 
 impl Money {
-    pub fn from_cents(value: u64) -> Self {
+    pub fn from_rupiah(value: u64) -> Self {
         Self(value)
+    }
+
+    pub fn from_cents(value: u64) -> Self {
+        Self::from_rupiah(value)
     }
 
     pub fn zero() -> Self {
         Self(0)
     }
 
-    pub fn cents(self) -> u64 {
+    pub fn rupiah(self) -> u64 {
         self.0
+    }
+
+    pub fn cents(self) -> u64 {
+        self.rupiah()
     }
 
     pub fn is_zero(self) -> bool {
@@ -53,7 +63,7 @@ impl Sub for Money {
 
 impl fmt::Display for Money {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}.{:02}", self.0 / 100, self.0 % 100)
+        write!(f, "{}", self.0)
     }
 }
 
@@ -67,6 +77,9 @@ pub enum TransactionType {
     Hold,
     Release,
     Convert,
+    Payout,
+    SellerEscrow,
+    SellerEscrowSettle,
     Bid,
     CancelBid,
     TopUpFailed,
@@ -83,6 +96,9 @@ impl TransactionType {
             Self::Hold => "HOLD",
             Self::Release => "RELEASE",
             Self::Convert => "CONVERT",
+            Self::Payout => "PAYOUT",
+            Self::SellerEscrow => "SELLER_ESCROW",
+            Self::SellerEscrowSettle => "SELLER_ESCROW_SETTLE",
             Self::Bid => "BID",
             Self::CancelBid => "CANCEL_BID",
             Self::TopUpFailed => "TOP_UP_FAILED",
@@ -102,6 +118,9 @@ impl TransactionType {
             "HOLD" => Self::Hold,
             "RELEASE" => Self::Release,
             "CONVERT" => Self::Convert,
+            "PAYOUT" => Self::Payout,
+            "SELLER_ESCROW" => Self::SellerEscrow,
+            "SELLER_ESCROW_SETTLE" => Self::SellerEscrowSettle,
             "BID" => Self::Bid,
             "CANCEL_BID" => Self::CancelBid,
             "TOP_UP_FAILED" => Self::TopUpFailed,
@@ -136,8 +155,9 @@ pub enum WalletError {
 /// Immutable record of a single wallet mutation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WalletTransaction {
-    pub id: String,
-    pub user_id: String,
+    pub id: Uuid,
+    pub user_id: Arc<str>,
+    pub role: Arc<str>,
     pub transaction_type: TransactionType,
     pub amount: Money,
     pub created_at: Option<String>,
@@ -146,15 +166,101 @@ pub struct WalletTransaction {
 }
 
 impl WalletTransaction {
-    pub fn new(user_id: &str, transaction_type: TransactionType, amount: Money) -> Self {
+    pub fn new(
+        user_id: &str,
+        role: &str,
+        transaction_type: TransactionType,
+        amount: Money,
+    ) -> Self {
         Self {
-            id: uuid::Uuid::new_v4().to_string(),
-            user_id: user_id.to_string(),
+            id: Uuid::nil(),
+            user_id: Arc::from(user_id),
+            role: Arc::from(role),
             transaction_type,
             amount,
             created_at: None,
             correlation_id: None,
             source_service: None,
+        }
+    }
+
+    fn from_wallet(
+        user_id: Arc<str>,
+        role: Arc<str>,
+        transaction_type: TransactionType,
+        amount: Money,
+    ) -> Self {
+        Self {
+            id: Uuid::nil(),
+            user_id,
+            role,
+            transaction_type,
+            amount,
+            created_at: None,
+            correlation_id: None,
+            source_service: None,
+        }
+    }
+
+    /// Entry point for the Builder Pattern — use when optional fields need to be set.
+    pub fn builder(
+        user_id: &str,
+        role: &str,
+        transaction_type: TransactionType,
+        amount: Money,
+    ) -> WalletTransactionBuilder {
+        WalletTransactionBuilder::new(user_id, role, transaction_type, amount)
+    }
+}
+
+// ── WalletTransactionBuilder ─────────────────────────────────────
+
+/// Builder for `WalletTransaction`. Required fields are given at construction;
+/// optional fields (`correlation_id`, `source_service`) are set via method chaining.
+pub struct WalletTransactionBuilder {
+    user_id: Arc<str>,
+    role: Arc<str>,
+    transaction_type: TransactionType,
+    amount: Money,
+    correlation_id: Option<String>,
+    source_service: Option<String>,
+}
+
+impl WalletTransactionBuilder {
+    fn new(user_id: &str, role: &str, transaction_type: TransactionType, amount: Money) -> Self {
+        Self {
+            user_id: Arc::from(user_id),
+            role: Arc::from(role),
+            transaction_type,
+            amount,
+            correlation_id: None,
+            source_service: None,
+        }
+    }
+
+    /// Associates this transaction with an external ID (e.g. a payment intent ID).
+    pub fn correlation_id(mut self, id: &str) -> Self {
+        self.correlation_id = Some(id.to_string());
+        self
+    }
+
+    /// Tags the originating service for this transaction (e.g. `"midtrans"`).
+    pub fn source_service(mut self, source: &str) -> Self {
+        self.source_service = Some(source.to_string());
+        self
+    }
+
+    /// Consumes the builder and returns the completed `WalletTransaction`.
+    pub fn build(self) -> WalletTransaction {
+        WalletTransaction {
+            id: Uuid::nil(),
+            user_id: self.user_id,
+            role: self.role,
+            transaction_type: self.transaction_type,
+            amount: self.amount,
+            created_at: None,
+            correlation_id: self.correlation_id,
+            source_service: self.source_service,
         }
     }
 }
@@ -169,7 +275,8 @@ impl WalletTransaction {
 #[derive(Debug, Clone)]
 pub struct Wallet {
     id: String,
-    user_id: String,
+    user_id: Arc<str>,
+    role: Arc<str>,
     active_balance: Money,
     held_balance: Money,
     version: i64,
@@ -177,10 +284,11 @@ pub struct Wallet {
 
 impl Wallet {
     /// Create a brand-new wallet with zero balances.
-    pub fn new(user_id: &str) -> Self {
+    pub fn new(user_id: &str, role: &str) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
-            user_id: user_id.to_string(),
+            user_id: Arc::from(user_id),
+            role: Arc::from(role),
             active_balance: Money::zero(),
             held_balance: Money::zero(),
             version: 0,
@@ -191,13 +299,15 @@ impl Wallet {
     pub fn with_balances(
         id: String,
         user_id: String,
+        role: String,
         active_balance: Money,
         held_balance: Money,
         version: i64,
     ) -> Self {
         Self {
             id,
-            user_id,
+            user_id: Arc::from(user_id),
+            role: Arc::from(role),
             active_balance,
             held_balance,
             version,
@@ -216,6 +326,10 @@ impl Wallet {
 
     pub fn user_id(&self) -> &str {
         &self.user_id
+    }
+
+    pub fn role(&self) -> &str {
+        &self.role
     }
 
     pub fn active_balance(&self) -> Money {
@@ -264,6 +378,34 @@ impl Wallet {
         Ok(self.record(TransactionType::Convert, amount))
     }
 
+    pub fn payout(&mut self, amount: Money) -> Result<WalletTransaction, WalletError> {
+        Self::validate_positive(amount)?;
+        self.active_balance = self.active_balance + amount;
+        Ok(self.record(TransactionType::Payout, amount))
+    }
+
+    /// Credits pending sale proceeds to held balance (not withdrawable until settled).
+    pub fn credit_seller_escrow(
+        &mut self,
+        amount: Money,
+    ) -> Result<WalletTransaction, WalletError> {
+        Self::validate_positive(amount)?;
+        self.held_balance = self.held_balance + amount;
+        Ok(self.record(TransactionType::SellerEscrow, amount))
+    }
+
+    /// Moves escrowed sale proceeds from held to active (withdrawable).
+    pub fn settle_seller_escrow(
+        &mut self,
+        amount: Money,
+    ) -> Result<WalletTransaction, WalletError> {
+        Self::validate_positive(amount)?;
+        self.require_held_balance(amount)?;
+        self.held_balance = self.held_balance - amount;
+        self.active_balance = self.active_balance + amount;
+        Ok(self.record(TransactionType::SellerEscrowSettle, amount))
+    }
+
     pub fn bid(&mut self, amount: Money) -> Result<WalletTransaction, WalletError> {
         Self::validate_positive(amount)?;
         self.require_active_balance(amount)?;
@@ -296,7 +438,7 @@ impl Wallet {
     }
 
     fn record(&self, tx_type: TransactionType, amount: Money) -> WalletTransaction {
-        WalletTransaction::new(&self.user_id, tx_type, amount)
+        WalletTransaction::from_wallet(self.user_id.clone(), self.role.clone(), tx_type, amount)
     }
 }
 
@@ -348,7 +490,8 @@ pub struct Hold {
 pub struct PaymentIntent {
     pub id: String,
     pub user_id: String,
-    pub amount_cents: i64,
+    pub role: String,
+    pub amount: i64,
     pub status: String,
     pub redirect_url: String,
     pub va_number: Option<String>,
@@ -361,7 +504,8 @@ pub struct PaymentIntent {
 pub struct WalletWithdrawal {
     pub id: String,
     pub user_id: String,
-    pub amount_cents: i64,
+    pub role: String,
+    pub amount: i64,
     pub bank_account: String,
     pub bank_code: Option<String>,
     pub account_number: Option<String>,

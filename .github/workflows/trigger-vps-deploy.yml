@@ -1,18 +1,49 @@
-name: Trigger VPS staging deploy
+name: Trigger VPS deploy
 
 on:
   push:
     branches:
       - staging
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Which VPS environment to deploy'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - prod
+
+concurrency:
+  group: bidmart-wallet-trigger-vps
+  cancel-in-progress: false
 
 jobs:
   dispatch:
     runs-on: ubuntu-latest
+    if: github.repository == 'advprog-2026-A17-project/bidmart-wallet-service-rust'
     steps:
+      - name: Resolve target
+        id: resolve
+        env:
+          INPUT_TARGET: ${{ github.event.inputs.target }}
+        run: |
+          target="${INPUT_TARGET:-staging}"
+          if [ "$target" != "prod" ] && [ "$target" != "staging" ]; then
+            target=staging
+          fi
+          echo "target=$target" >> "$GITHUB_OUTPUT"
+          echo "Triggering VPS deploy: $target"
+
       - name: Trigger infrastructure VPS deploy
         env:
           GH_TOKEN: ${{ secrets.VPS_DEPLOY_DISPATCH_TOKEN }}
+          EVENT_TYPE: deploy-vps-${{ steps.resolve.outputs.target }}
         run: |
-          test -n "$GH_TOKEN"
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::VPS_DEPLOY_DISPATCH_TOKEN is not configured."
+            exit 1
+          fi
           gh api repos/advprog-2026-A17-project/bidmart-infrastructure/dispatches \
-            -f event_type=deploy-vps-staging
+            -f event_type="$EVENT_TYPE"

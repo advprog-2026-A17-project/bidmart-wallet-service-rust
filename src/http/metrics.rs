@@ -92,7 +92,8 @@ impl RequestMetrics {
             self.latency_le_2500ms.fetch_add(1, Ordering::Relaxed);
         }
         self.latency_le_inf.fetch_add(1, Ordering::Relaxed);
-        self.latency_sum_us.fetch_add(duration_us, Ordering::Relaxed);
+        self.latency_sum_us
+            .fetch_add(duration_us, Ordering::Relaxed);
     }
 
     pub fn record_operation(&self, op: &str) {
@@ -200,8 +201,5 @@ pub fn render_prometheus_body(uptime_seconds: f64) -> String {
 static STARTED_AT: OnceLock<Instant> = OnceLock::new();
 
 pub fn service_uptime_seconds() -> f64 {
-    STARTED_AT
-        .get_or_init(Instant::now)
-        .elapsed()
-        .as_secs_f64()
+    STARTED_AT.get_or_init(Instant::now).elapsed().as_secs_f64()
 }

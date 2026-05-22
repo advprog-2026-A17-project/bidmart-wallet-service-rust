@@ -24,12 +24,31 @@ jobs:
           MIDTRANS_SERVER_KEY: SB-Mid-server-local
         run: cargo test --locked -- --nocapture 2>&1 | tee test-output.log
 
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked
+
+      - name: Generate Coverage Report
+        env:
+          MIDTRANS_SERVER_KEY: SB-Mid-server-local
+        run: |
+          mkdir -p coverage
+          cargo llvm-cov --workspace --all-features --lcov --output-path coverage/lcov.info 2>&1 | tee coverage-output.log
+
       - name: Upload Rust Test Artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: wallet-service-test-log
           path: test-output.log
+
+      - name: Upload Coverage Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wallet-service-coverage-log
+          path: |
+            coverage-output.log
+            coverage/lcov.info
 
   sonarcloud:
     name: SonarCloud Code Analysis
@@ -42,8 +61,26 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Download Coverage Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wallet-service-coverage-log
+          path: .
+
       - name: SonarCloud Scan
         if: env.SONAR_TOKEN != ''
-        uses: SonarSource/sonarqube-scan-action@v5
+        uses: SonarSource/sonarqube-scan-action@v7
         env:
           SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
+        with:
+          args: >
+            "-Dsonar.qualitygate.wait=true"
+            "-Dsonar.rust.lcov.reportPaths=coverage/lcov.info"

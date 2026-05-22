@@ -129,7 +129,7 @@ async fn create_payment_uses_local_redirect_when_server_key_missing() {
 
     let gateway = MidtransGateway::from_env();
     let page = gateway
-        .create_payment("pay-123", Money::from_cents(125_00), Some("bca_va"))
+        .create_payment("pay-123", Money::from_cents(12_500), Some("bca_va"))
         .await
         .unwrap();
 
@@ -171,7 +171,7 @@ async fn validate_bank_account_returns_dummy_when_iris_missing() {
 async fn create_payment_rejects_unknown_method() {
     let gateway = MidtransGateway::from_env();
     let err = gateway
-        .create_payment("pay-999", Money::from_cents(100_00), Some("mystery"))
+        .create_payment("pay-999", Money::from_cents(10_000), Some("mystery"))
         .await
         .unwrap_err();
 

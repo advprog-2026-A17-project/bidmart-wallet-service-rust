@@ -1,8 +1,14 @@
 use sqlx::AnyPool;
+use std::sync::Arc;
 
+use super::payment_strategy::{MidtransPaymentGateway, PaymentGateway, PaymentStatusStrategy};
+use super::wallet_commands::{
+    CreateWalletHandler, HoldFundsHandler, PayoutHandler, ProvisionWalletHandler,
+    TopUpIntentHandler, WalletMutationHandler,
+};
+use super::wallet_validation::{WalletCommandContext, WalletValidationChain};
 use crate::payment::{
-    GatewayError, MidtransGateway, map_midtrans_transaction_status, normalize_account_number,
-    normalize_bank_code,
+    GatewayError, map_midtrans_transaction_status, normalize_account_number, normalize_bank_code,
 };
 use crate::persistence::repositories::{
     ProvisioningEventRepository, TransactionRepository, WalletRepository,
@@ -78,17 +84,21 @@ pub struct WalletService {
     wallet_repo: WalletRepository,
     tx_repo: TransactionRepository,
     prov_repo: ProvisioningEventRepository,
-    /// Facade to the Midtrans API.
-    midtrans: MidtransGateway,
+    /// Facade to the configured payment gateway.
+    payment_gateway: Arc<dyn PaymentGateway>,
 }
 
 impl WalletService {
     pub fn new(pool: AnyPool) -> Self {
+        Self::new_with_gateway(pool, Arc::new(MidtransPaymentGateway::from_env()))
+    }
+
+    pub fn new_with_gateway(pool: AnyPool, payment_gateway: Arc<dyn PaymentGateway>) -> Self {
         Self {
             wallet_repo: WalletRepository::new(pool.clone()),
             tx_repo: TransactionRepository::new(pool.clone()),
             prov_repo: ProvisioningEventRepository::new(pool),
-            midtrans: MidtransGateway::from_env(),
+            payment_gateway,
         }
     }
 
@@ -156,6 +166,14 @@ impl WalletService {
     // ── Commands ─────────────────────────────────────────────────
 
     pub async fn create_wallet(&self, user_id: &str, role: &str) -> Result<Wallet, ServiceError> {
+        CreateWalletHandler::new(self).handle(user_id, role).await
+    }
+
+    pub(crate) async fn create_wallet_core(
+        &self,
+        user_id: &str,
+        role: &str,
+    ) -> Result<Wallet, ServiceError> {
         if let Ok(Some(existing)) = self
             .wallet_repo
             .find_by_user_id_and_role(user_id, role)
@@ -179,6 +197,24 @@ impl WalletService {
         role: &str,
         amount: Money,
     ) -> Result<Wallet, ServiceError> {
+        WalletMutationHandler::new(self)
+            .top_up(user_id, role, amount)
+            .await
+    }
+
+    pub(crate) async fn top_up_core(
+        &self,
+        user_id: &str,
+        role: &str,
+        amount: Money,
+    ) -> Result<Wallet, ServiceError> {
+        WalletValidationChain::wallet_mutation().validate(&WalletCommandContext {
+            user_id,
+            role,
+            amount: Some(amount),
+            correlation_id: None,
+            status: None,
+        })?;
         self.mutate_wallet(user_id, role, |w| w.top_up(amount))
             .await
     }
@@ -189,6 +225,24 @@ impl WalletService {
         role: &str,
         amount: Money,
     ) -> Result<Wallet, ServiceError> {
+        WalletMutationHandler::new(self)
+            .withdraw(user_id, role, amount)
+            .await
+    }
+
+    pub(crate) async fn withdraw_core(
+        &self,
+        user_id: &str,
+        role: &str,
+        amount: Money,
+    ) -> Result<Wallet, ServiceError> {
+        WalletValidationChain::wallet_mutation().validate(&WalletCommandContext {
+            user_id,
+            role,
+            amount: Some(amount),
+            correlation_id: None,
+            status: None,
+        })?;
         self.mutate_wallet(user_id, role, |w| w.withdraw(amount))
             .await
     }
@@ -202,19 +256,35 @@ impl WalletService {
         payment_method: Option<&str>,
         idempotency_key: Option<&str>,
     ) -> Result<PaymentIntent, ServiceError> {
-        if amount.is_zero() {
-            return Err(ServiceError::Domain(WalletError::InvalidAmount));
-        }
+        TopUpIntentHandler::new(self)
+            .handle(user_id, role, amount, payment_method, idempotency_key)
+            .await
+    }
+
+    pub(crate) async fn create_top_up_intent_core(
+        &self,
+        user_id: &str,
+        role: &str,
+        amount: Money,
+        payment_method: Option<&str>,
+        idempotency_key: Option<&str>,
+    ) -> Result<PaymentIntent, ServiceError> {
+        WalletValidationChain::wallet_mutation().validate(&WalletCommandContext {
+            user_id,
+            role,
+            amount: Some(amount),
+            correlation_id: idempotency_key,
+            status: None,
+        })?;
         self.find_by_user_id_and_role(user_id, role).await?;
         let idempotency_key = normalize_idempotency_key(idempotency_key);
-        if let Some(key) = idempotency_key.as_deref() {
-            if let Some(existing) = self
+        if let Some(key) = idempotency_key.as_deref()
+            && let Some(existing) = self
                 .wallet_repo
                 .find_payment_intent_by_idempotency_key(user_id, role, key)
                 .await?
-            {
-                return Ok(existing);
-            }
+        {
+            return Ok(existing);
         }
 
         let payment_id = idempotency_key
@@ -224,7 +294,7 @@ impl WalletService {
 
         // Facade call — no HTTP details here
         let page = self
-            .midtrans
+            .payment_gateway
             .create_payment(&payment_id, amount, payment_method)
             .await?;
 
@@ -244,14 +314,13 @@ impl WalletService {
         {
             Ok(payment) => Ok(payment),
             Err(error) => {
-                if let Some(key) = idempotency_key.as_deref() {
-                    if let Some(existing) = self
+                if let Some(key) = idempotency_key.as_deref()
+                    && let Some(existing) = self
                         .wallet_repo
                         .find_payment_intent_by_idempotency_key(user_id, role, key)
                         .await?
-                    {
-                        return Ok(existing);
-                    }
+                {
+                    return Ok(existing);
                 }
                 Err(ServiceError::Persistence(error))
             }
@@ -293,7 +362,10 @@ impl WalletService {
         }
 
         // Facade call — no URL or auth details here
-        let transaction_status = self.midtrans.fetch_transaction_status(payment_id).await?;
+        let transaction_status = self
+            .payment_gateway
+            .fetch_transaction_status(payment_id)
+            .await?;
 
         let normalized = map_midtrans_transaction_status(&transaction_status)
             .map_err(ServiceError::InvalidPaymentStatus)?;
@@ -305,9 +377,16 @@ impl WalletService {
         payment_id: &str,
         normalized: &str,
     ) -> Result<PaymentIntent, ServiceError> {
-        if !matches!(normalized, "PAID" | "FAILED" | "EXPIRED" | "PENDING") {
-            return Err(ServiceError::InvalidPaymentStatus(normalized.to_string()));
-        }
+        WalletValidationChain::payment_status().validate(&WalletCommandContext {
+            user_id: "",
+            role: "",
+            amount: None,
+            correlation_id: None,
+            status: Some(normalized),
+        })?;
+        let normalized = PaymentStatusStrategy::parse(normalized)
+            .ok_or_else(|| ServiceError::InvalidPaymentStatus(normalized.to_string()))?
+            .as_wire_value();
 
         self.wallet_repo
             .apply_payment_status(payment_id, normalized)
@@ -341,18 +420,42 @@ impl WalletService {
         account_number: &str,
         idempotency_key: Option<&str>,
     ) -> Result<WalletWithdrawal, ServiceError> {
-        if amount.is_zero() {
-            return Err(ServiceError::Domain(WalletError::InvalidAmount));
-        }
+        PayoutHandler::new(self)
+            .create_withdrawal(
+                user_id,
+                role,
+                amount,
+                bank_code,
+                account_number,
+                idempotency_key,
+            )
+            .await
+    }
+
+    pub(crate) async fn create_withdrawal_core(
+        &self,
+        user_id: &str,
+        role: &str,
+        amount: Money,
+        bank_code: &str,
+        account_number: &str,
+        idempotency_key: Option<&str>,
+    ) -> Result<WalletWithdrawal, ServiceError> {
+        WalletValidationChain::wallet_mutation().validate(&WalletCommandContext {
+            user_id,
+            role,
+            amount: Some(amount),
+            correlation_id: idempotency_key,
+            status: None,
+        })?;
         let idempotency_key = normalize_idempotency_key(idempotency_key);
-        if let Some(key) = idempotency_key.as_deref() {
-            if let Some(existing) = self
+        if let Some(key) = idempotency_key.as_deref()
+            && let Some(existing) = self
                 .wallet_repo
                 .find_withdrawal_by_idempotency_key(user_id, role, key)
                 .await?
-            {
-                return Ok(existing);
-            }
+        {
+            return Ok(existing);
         }
 
         let bank_code =
@@ -362,12 +465,12 @@ impl WalletService {
 
         // Facade calls — IRIS API details are hidden inside MidtransGateway
         let validated_account = self
-            .midtrans
+            .payment_gateway
             .validate_bank_account(&bank_code, &account_number)
             .await?;
 
         let payout = self
-            .midtrans
+            .payment_gateway
             .create_payout(user_id, amount, &validated_account)
             .await?;
 
@@ -399,15 +502,14 @@ impl WalletService {
         {
             Ok(withdrawal) => Ok(withdrawal),
             Err(error) => {
-                if let Some(key) = idempotency_key.as_deref() {
-                    if let Some(existing) = self
+                if let Some(key) = idempotency_key.as_deref()
+                    && let Some(existing) = self
                         .wallet_repo
                         .find_withdrawal_by_idempotency_key(user_id, role, key)
                         .await?
-                    {
-                        let _ = self.top_up(user_id, role, amount).await;
-                        return Ok(existing);
-                    }
+                {
+                    let _ = self.top_up(user_id, role, amount).await;
+                    return Ok(existing);
                 }
                 Err(ServiceError::Persistence(error))
             }
@@ -466,6 +568,24 @@ impl WalletService {
         role: &str,
         amount: Money,
     ) -> Result<Wallet, ServiceError> {
+        WalletMutationHandler::new(self)
+            .hold(user_id, role, amount)
+            .await
+    }
+
+    pub(crate) async fn hold_core(
+        &self,
+        user_id: &str,
+        role: &str,
+        amount: Money,
+    ) -> Result<Wallet, ServiceError> {
+        WalletValidationChain::wallet_mutation().validate(&WalletCommandContext {
+            user_id,
+            role,
+            amount: Some(amount),
+            correlation_id: None,
+            status: None,
+        })?;
         self.mutate_wallet(user_id, role, |w| w.hold(amount)).await
     }
 
@@ -475,6 +595,24 @@ impl WalletService {
         role: &str,
         amount: Money,
     ) -> Result<Wallet, ServiceError> {
+        WalletMutationHandler::new(self)
+            .release(user_id, role, amount)
+            .await
+    }
+
+    pub(crate) async fn release_core(
+        &self,
+        user_id: &str,
+        role: &str,
+        amount: Money,
+    ) -> Result<Wallet, ServiceError> {
+        WalletValidationChain::wallet_mutation().validate(&WalletCommandContext {
+            user_id,
+            role,
+            amount: Some(amount),
+            correlation_id: None,
+            status: None,
+        })?;
         self.mutate_wallet(user_id, role, |w| w.release(amount))
             .await
     }
@@ -485,6 +623,24 @@ impl WalletService {
         role: &str,
         amount: Money,
     ) -> Result<Wallet, ServiceError> {
+        WalletMutationHandler::new(self)
+            .convert(user_id, role, amount)
+            .await
+    }
+
+    pub(crate) async fn convert_core(
+        &self,
+        user_id: &str,
+        role: &str,
+        amount: Money,
+    ) -> Result<Wallet, ServiceError> {
+        WalletValidationChain::wallet_mutation().validate(&WalletCommandContext {
+            user_id,
+            role,
+            amount: Some(amount),
+            correlation_id: None,
+            status: None,
+        })?;
         self.mutate_wallet(user_id, role, |w| w.convert(amount))
             .await
     }
@@ -519,6 +675,7 @@ impl WalletService {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn hold_funds(
         &self,
         user_id: &str,
@@ -529,26 +686,51 @@ impl WalletService {
         hold_id: &str,
         expires_at: &str,
     ) -> Result<Hold, ServiceError> {
+        HoldFundsHandler::new(self)
+            .handle(
+                user_id, role, auction_id, bid_id, amount, hold_id, expires_at,
+            )
+            .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn hold_funds_core(
+        &self,
+        user_id: &str,
+        role: &str,
+        auction_id: &str,
+        bid_id: &str,
+        amount: Money,
+        hold_id: &str,
+        expires_at: &str,
+    ) -> Result<Hold, ServiceError> {
+        WalletValidationChain::hold_command().validate(&WalletCommandContext {
+            user_id,
+            role,
+            amount: Some(amount),
+            correlation_id: Some(hold_id),
+            status: None,
+        })?;
         let wallet = self.find_by_user_id_and_role(user_id, role).await?;
 
         self.wallet_repo
             .hold_funds(wallet.id(), auction_id, bid_id, amount, hold_id, expires_at)
             .await
-            .map_err(|e| ServiceError::HoldFailed(e))
+            .map_err(ServiceError::HoldFailed)
     }
 
     pub async fn release_funds(&self, hold_id: &str) -> Result<Hold, ServiceError> {
         self.wallet_repo
             .release_funds(hold_id)
             .await
-            .map_err(|e| ServiceError::HoldFailed(e))
+            .map_err(ServiceError::HoldFailed)
     }
 
     pub async fn convert_funds(&self, hold_id: &str) -> Result<Hold, ServiceError> {
         self.wallet_repo
             .convert_funds(hold_id)
             .await
-            .map_err(|e| ServiceError::HoldFailed(e))
+            .map_err(ServiceError::HoldFailed)
     }
 
     pub async fn credit_seller_escrow(
@@ -570,8 +752,8 @@ impl WalletService {
         };
 
         let correlation_id = normalized_correlation_id(correlation_id);
-        if let Some(correlation_id) = correlation_id {
-            if self
+        if let Some(correlation_id) = correlation_id
+            && self
                 .tx_repo
                 .find_by_source_correlation_and_type(
                     AUCTION_SERVICE_SOURCE,
@@ -580,9 +762,8 @@ impl WalletService {
                 )
                 .await?
                 .is_some()
-            {
-                return Ok(wallet);
-            }
+        {
+            return Ok(wallet);
         }
 
         self.wallet_repo
@@ -640,8 +821,8 @@ impl WalletService {
         };
 
         let order_id = normalized_correlation_id(order_id);
-        if let Some(order_id) = order_id {
-            if self
+        if let Some(order_id) = order_id
+            && self
                 .tx_repo
                 .find_by_source_correlation_and_type(
                     ORDER_SERVICE_SOURCE,
@@ -650,9 +831,8 @@ impl WalletService {
                 )
                 .await?
                 .is_some()
-            {
-                return Ok(wallet);
-            }
+        {
+            return Ok(wallet);
         }
 
         self.mutate_wallet_with_metadata(
@@ -677,6 +857,19 @@ impl WalletService {
 
     /// Provision a wallet from an external auth event. Idempotent by event_id.
     pub async fn provision_wallet(
+        &self,
+        event_id: &str,
+        user_id: &str,
+        email: &str,
+        role: &str,
+        source: &str,
+    ) -> Result<(), ServiceError> {
+        ProvisionWalletHandler::new(self)
+            .handle(event_id, user_id, email, role, source)
+            .await
+    }
+
+    pub(crate) async fn provision_wallet_core(
         &self,
         event_id: &str,
         user_id: &str,

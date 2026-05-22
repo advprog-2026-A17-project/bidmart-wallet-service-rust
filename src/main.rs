@@ -5,6 +5,7 @@ use bidmart_wallet_service_rust::persistence::repositories::WalletRepository;
 use bidmart_wallet_service_rust::server;
 use bidmart_wallet_service_rust::server::default_database_url;
 use bidmart_wallet_service_rust::service::reconciliation::run_reconciliation_worker;
+use bidmart_wallet_service_rust::service::wallet_service::WalletService;
 use dotenvy::from_path;
 
 #[tokio::main]
@@ -29,18 +30,30 @@ async fn main() {
         run_reconciliation_worker(worker_repo).await;
     });
 
+    let provisioning_service = Arc::new(WalletService::new(pool.clone()));
+    let provisioning_consumer = Arc::new(
+        bidmart_wallet_service_rust::messaging::provisioning_consumer::WalletProvisioningConsumer::from_env(
+            provisioning_service,
+        ),
+    );
+    tokio::spawn(async move {
+        provisioning_consumer.run().await;
+    });
+
     let app = server::build_router(pool.clone());
 
     let grpc_port = env::var("GRPC_PORT").unwrap_or_else(|_| "50051".to_string());
     let grpc_addr = format!("0.0.0.0:{grpc_port}").parse().unwrap();
     let grpc_handler = bidmart_wallet_service_rust::grpc::WalletGrpcHandler::new(pool.clone());
-    
+
     println!("wallet service listening on {addr}");
     println!("wallet gRPC service listening on {grpc_addr}");
 
     let http_server = axum::serve(tokio::net::TcpListener::bind(&addr).await.unwrap(), app);
     let grpc_server = tonic::transport::Server::builder()
-        .add_service(bidmart_wallet_service_rust::grpc::WalletServiceServer::new(grpc_handler))
+        .add_service(bidmart_wallet_service_rust::grpc::WalletServiceServer::new(
+            grpc_handler,
+        ))
         .serve(grpc_addr);
 
     tokio::select! {

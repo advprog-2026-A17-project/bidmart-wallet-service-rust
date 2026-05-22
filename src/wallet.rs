@@ -111,7 +111,7 @@ impl TransactionType {
     /// Parse a wire-format string back into a `TransactionType`.
     ///
     /// Panics on unknown values — only valid DB data should reach here.
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_wire_value(s: &str) -> Self {
         match s {
             "TOP_UP" => Self::TopUp,
             "WITHDRAW" => Self::Withdraw,

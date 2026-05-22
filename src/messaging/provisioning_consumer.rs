@@ -1,17 +1,17 @@
 use std::env;
 use std::sync::Arc;
 
+use crate::service::wallet_service::WalletService;
 use futures_lite::StreamExt;
 use lapin::{
+    Connection, ConnectionProperties,
     options::{
         BasicAckOptions, BasicConsumeOptions, BasicQosOptions, ExchangeDeclareOptions,
         QueueBindOptions, QueueDeclareOptions,
     },
     types::{AMQPValue, FieldTable},
-    Connection, ConnectionProperties,
 };
 use serde::Deserialize;
-use crate::service::wallet_service::WalletService;
 
 #[derive(Debug, Deserialize)]
 struct WalletProvisionPayload {
@@ -131,12 +131,8 @@ impl WalletProvisioningConsumer {
         Err("consumer stream ended".to_string())
     }
 
-    async fn handle_delivery(
-        &self,
-        delivery: &lapin::message::Delivery,
-    ) -> Result<(), String> {
-        let body = std::str::from_utf8(&delivery.data)
-            .map_err(|e| format!("utf8 body: {e}"))?;
+    async fn handle_delivery(&self, delivery: &lapin::message::Delivery) -> Result<(), String> {
+        let body = std::str::from_utf8(&delivery.data).map_err(|e| format!("utf8 body: {e}"))?;
         let payload: WalletProvisionPayload =
             serde_json::from_str(body).map_err(|e| format!("json: {e}"))?;
 

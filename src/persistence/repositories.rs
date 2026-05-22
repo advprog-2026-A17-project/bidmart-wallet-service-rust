@@ -38,7 +38,7 @@ fn transaction_from_row(row: TransactionRow) -> WalletTransaction {
         id: uuid::Uuid::parse_str(&row.id).expect("persisted wallet transaction id must be UUID"),
         user_id: std::sync::Arc::from(row.user_id),
         role: std::sync::Arc::from(row.role),
-        transaction_type: TransactionType::from_str(&row.transaction_type),
+        transaction_type: TransactionType::from_wire_value(&row.transaction_type),
         amount: Money::from_rupiah(row.amount as u64),
         created_at: Some(row.created_at),
         correlation_id: row.correlation_id,
@@ -77,8 +77,8 @@ async fn insert_wallet_transaction_with_tx(
         .bind(wallet_tx.role.as_ref())
         .bind(wallet_tx.transaction_type.as_str())
         .bind(wallet_tx.amount.rupiah() as i64)
-        .bind(&wallet_tx.correlation_id)
-        .bind(&wallet_tx.source_service)
+        .bind(wallet_tx.correlation_id.clone())
+        .bind(wallet_tx.source_service.clone())
         .execute(&mut **tx)
         .await?;
 
@@ -390,8 +390,8 @@ impl WalletRepository {
             .bind(wallet_tx.role.as_ref())
             .bind(wallet_tx.transaction_type.as_str())
             .bind(wallet_tx.amount.rupiah() as i64)
-            .bind(&wallet_tx.correlation_id)
-            .bind(&wallet_tx.source_service)
+            .bind(wallet_tx.correlation_id.clone())
+            .bind(wallet_tx.source_service.clone())
             .execute(&mut *tx)
             .await
             .map_err(|e| e.to_string())?;
@@ -463,8 +463,8 @@ impl WalletRepository {
             .bind(wallet_tx.role.as_ref())
             .bind(wallet_tx.transaction_type.as_str())
             .bind(wallet_tx.amount.rupiah() as i64)
-            .bind(&wallet_tx.correlation_id)
-            .bind(&wallet_tx.source_service)
+            .bind(wallet_tx.correlation_id.clone())
+            .bind(wallet_tx.source_service.clone())
             .execute(&mut *tx)
             .await
             .map_err(|e| e.to_string())?;
@@ -496,6 +496,7 @@ impl WalletRepository {
         Ok(rows.into_iter().map(|r| r.0).collect())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn insert_payment_intent(
         &self,
         payment_id: &str,
@@ -676,8 +677,8 @@ impl WalletRepository {
             .bind(wallet_tx.role.as_ref())
             .bind(wallet_tx.transaction_type.as_str())
             .bind(wallet_tx.amount.rupiah() as i64)
-            .bind(&wallet_tx.correlation_id)
-            .bind(&wallet_tx.source_service)
+            .bind(wallet_tx.correlation_id.clone())
+            .bind(wallet_tx.source_service.clone())
             .execute(&mut *tx)
             .await?;
         }
@@ -688,6 +689,7 @@ impl WalletRepository {
             .ok_or(sqlx::Error::RowNotFound)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn insert_withdrawal(
         &self,
         withdrawal_id: &str,
@@ -716,7 +718,7 @@ impl WalletRepository {
         .execute(&self.pool)
         .await?;
 
-        self.find_withdrawal(&withdrawal_id)
+        self.find_withdrawal(withdrawal_id)
             .await?
             .ok_or(sqlx::Error::RowNotFound)
     }
@@ -789,8 +791,8 @@ impl TransactionRepository {
         .bind(tx.role.as_ref())
         .bind(tx.transaction_type.as_str())
         .bind(tx.amount.rupiah() as i64)
-        .bind(&tx.correlation_id)
-        .bind(&tx.source_service)
+        .bind(tx.correlation_id.clone())
+        .bind(tx.source_service.clone())
         .execute(&self.pool)
         .await?;
         Ok(())

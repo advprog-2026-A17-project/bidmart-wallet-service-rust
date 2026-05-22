@@ -1,4 +1,4 @@
-/// Payment module — Facade over the Midtrans Core API and IRIS Disbursement subsystems.
+//! Payment module — Facade over the Midtrans Core API and IRIS Disbursement subsystems.
 
 // ── Public types used by WalletService ──────────────────────────────
 
@@ -54,8 +54,7 @@ impl MidtransGateway {
         amount: crate::wallet::Money,
         payment_method: Option<&str>,
     ) -> Result<PaymentPage, GatewayError> {
-        let method = MidtransPaymentMethod::parse(payment_method)
-            .map_err(|e| GatewayError(e))?;
+        let method = MidtransPaymentMethod::parse(payment_method).map_err(GatewayError)?;
         create_midtrans_payment_inner(payment_id, amount, method).await
     }
 
@@ -79,10 +78,7 @@ impl MidtransGateway {
     }
 
     /// Fetches the transaction status from Midtrans. Requires `MIDTRANS_SERVER_KEY`.
-    pub async fn fetch_transaction_status(
-        &self,
-        payment_id: &str,
-    ) -> Result<String, GatewayError> {
+    pub async fn fetch_transaction_status(&self, payment_id: &str) -> Result<String, GatewayError> {
         fetch_midtrans_transaction_status(payment_id).await
     }
 }

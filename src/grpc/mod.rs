@@ -2,9 +2,9 @@ pub mod wallet {
     tonic::include_proto!("wallet.v1");
 }
 
-use tonic::{Request, Response, Status};
 use crate::service::wallet_service::WalletService;
 use crate::wallet::Money;
+use tonic::{Request, Response, Status};
 use wallet::wallet_service_server::WalletService as GrpcWalletService;
 pub use wallet::wallet_service_server::WalletServiceServer;
 use wallet::{
@@ -31,7 +31,7 @@ impl GrpcWalletService for WalletGrpcHandler {
         request: Request<GrpcHoldFundsRequest>,
     ) -> Result<Response<GrpcHoldFundsResponse>, Status> {
         let req = request.into_inner();
-        
+
         let user_id = &req.user_id;
         let role = req.role.as_deref().unwrap_or("BUYER");
         let hold_id = &req.hold_id;
@@ -40,9 +40,12 @@ impl GrpcWalletService for WalletGrpcHandler {
         let expires_at = &req.expires_at;
         let amount = Money::from_rupiah(req.amount);
 
-        match self.wallet_service
-            .hold_funds(user_id, role, auction_id, bid_id, amount, hold_id, expires_at)
-            .await 
+        match self
+            .wallet_service
+            .hold_funds(
+                user_id, role, auction_id, bid_id, amount, hold_id, expires_at,
+            )
+            .await
         {
             Ok(hold) => Ok(Response::new(GrpcHoldFundsResponse {
                 id: hold.id.to_string(),

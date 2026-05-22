@@ -93,10 +93,9 @@ async fn get_wallet_detail(
     };
 
     let unpaid_payments = match svc.get_unpaid_payment_intents(&user_id).await {
-        Ok(payments) => crate::service::wallet_service::filter_unpaid_without_settled_top_up(
-            payments,
-            &history,
-        ),
+        Ok(payments) => {
+            crate::service::wallet_service::filter_unpaid_without_settled_top_up(payments, &history)
+        }
         Err(e) => return Err(map_error(e)),
     };
 

@@ -1,16 +1,18 @@
 CREATE TABLE IF NOT EXISTS wallets (
     id                   TEXT PRIMARY KEY,
-    user_id              TEXT NOT NULL UNIQUE,
-    active_balance_cents INTEGER NOT NULL DEFAULT 0,
-    held_balance_cents   INTEGER NOT NULL DEFAULT 0,
-    version              INTEGER NOT NULL DEFAULT 0
+    user_id              TEXT NOT NULL,
+    role                 TEXT NOT NULL DEFAULT 'BUYER',
+    active_balance INTEGER NOT NULL DEFAULT 0 CHECK (active_balance >= 0),
+    held_balance   INTEGER NOT NULL DEFAULT 0 CHECK (held_balance >= 0),
+    version              INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(user_id, role)
 );
 
 CREATE TABLE IF NOT EXISTS wallet_transactions (
     id               TEXT PRIMARY KEY,
     user_id          TEXT NOT NULL,
     transaction_type TEXT NOT NULL,
-    amount_cents     INTEGER NOT NULL,
+    amount     INTEGER NOT NULL CHECK (amount >= 0),
     created_at       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     correlation_id   TEXT,
     source_service   TEXT
@@ -33,7 +35,7 @@ CREATE TABLE IF NOT EXISTS holds (
     wallet_id  TEXT NOT NULL,
     auction_id TEXT NOT NULL,
     bid_id     TEXT NOT NULL,
-    amount     INTEGER NOT NULL,
+    amount     INTEGER NOT NULL CHECK (amount >= 0),
     status     TEXT NOT NULL,
     expires_at TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -46,7 +48,7 @@ CREATE INDEX IF NOT EXISTS idx_holds_wallet ON holds(wallet_id);
 CREATE TABLE IF NOT EXISTS wallet_payment_intents (
     id           TEXT PRIMARY KEY,
     user_id      TEXT NOT NULL,
-    amount_cents INTEGER NOT NULL,
+    amount INTEGER NOT NULL CHECK (amount >= 0),
     status       TEXT NOT NULL,
     redirect_url TEXT NOT NULL,
     va_number    TEXT,
@@ -61,7 +63,7 @@ CREATE INDEX IF NOT EXISTS idx_wallet_payment_intents_user_id
 CREATE TABLE IF NOT EXISTS wallet_withdrawals (
     id           TEXT PRIMARY KEY,
     user_id      TEXT NOT NULL,
-    amount_cents INTEGER NOT NULL,
+    amount INTEGER NOT NULL CHECK (amount >= 0),
     bank_account TEXT NOT NULL,
     bank_code    TEXT,
     account_number TEXT,

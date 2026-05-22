@@ -10,14 +10,14 @@ use crate::wallet::{
 
 // ── Column lists (DRY) ──────────────────────────────────────────
 
-const WALLET_COLS: &str = "id, user_id, active_balance_cents, held_balance_cents, version";
+const WALLET_COLS: &str = "id, user_id, role, active_balance, held_balance, version";
 const TX_COLS: &str =
-    "id, user_id, transaction_type, amount_cents, created_at, correlation_id, source_service";
+    "id, user_id, role, transaction_type, amount, created_at, correlation_id, source_service";
 const PROV_COLS: &str = "event_id, user_id, email, occurred_at, source, processed_at";
 const HOLD_COLS: &str =
     "id, wallet_id, auction_id, bid_id, amount, status, expires_at, created_at, updated_at";
-const PAYMENT_COLS: &str = "id, user_id, amount_cents, status, redirect_url, va_number, payment_channel, created_at, updated_at";
-const WITHDRAWAL_COLS: &str = "id, user_id, amount_cents, bank_account, bank_code, account_number, account_name, payout_reference, failure_reason, status, created_at, updated_at";
+const PAYMENT_COLS: &str = "id, user_id, role, amount, status, redirect_url, va_number, payment_channel, created_at, updated_at";
+const WITHDRAWAL_COLS: &str = "id, user_id, role, amount, bank_account, bank_code, account_number, account_name, payout_reference, failure_reason, status, created_at, updated_at";
 
 // ── Row → Domain mappers ────────────────────────────────────────
 
@@ -25,21 +25,31 @@ fn wallet_from_row(row: WalletRow) -> Wallet {
     Wallet::with_balances(
         row.id,
         row.user_id,
-        Money::from_cents(row.active_balance_cents as u64),
-        Money::from_cents(row.held_balance_cents as u64),
+        row.role,
+        Money::from_rupiah(row.active_balance as u64),
+        Money::from_rupiah(row.held_balance as u64),
         row.version,
     )
 }
 
 fn transaction_from_row(row: TransactionRow) -> WalletTransaction {
     WalletTransaction {
-        id: row.id,
-        user_id: row.user_id,
+        id: uuid::Uuid::parse_str(&row.id).expect("persisted wallet transaction id must be UUID"),
+        user_id: std::sync::Arc::from(row.user_id),
+        role: std::sync::Arc::from(row.role),
         transaction_type: TransactionType::from_str(&row.transaction_type),
-        amount: Money::from_cents(row.amount_cents as u64),
+        amount: Money::from_rupiah(row.amount as u64),
         created_at: Some(row.created_at),
         correlation_id: row.correlation_id,
         source_service: row.source_service,
+    }
+}
+
+fn transaction_id_for_insert(tx: &WalletTransaction) -> String {
+    if tx.id.is_nil() {
+        uuid::Uuid::new_v4().to_string()
+    } else {
+        tx.id.to_string()
     }
 }
 
@@ -55,22 +65,28 @@ impl WalletRepository {
     }
 
     pub async fn insert(&self, wallet: &Wallet) -> Result<(), sqlx::Error> {
-        let sql = format!("INSERT INTO wallets ({WALLET_COLS}) VALUES ($1, $2, $3, $4, $5)");
+        let sql = format!("INSERT INTO wallets ({WALLET_COLS}) VALUES ($1, $2, $3, $4, $5, $6)");
         sqlx::query(&sql)
             .bind(wallet.id())
             .bind(wallet.user_id())
-            .bind(wallet.active_balance().cents() as i64)
-            .bind(wallet.held_balance().cents() as i64)
+            .bind(wallet.role())
+            .bind(wallet.active_balance().rupiah() as i64)
+            .bind(wallet.held_balance().rupiah() as i64)
             .bind(wallet.version())
             .execute(&self.pool)
             .await?;
         Ok(())
     }
 
-    pub async fn find_by_user_id(&self, user_id: &str) -> Result<Option<Wallet>, sqlx::Error> {
-        let sql = format!("SELECT {WALLET_COLS} FROM wallets WHERE user_id = $1");
+    pub async fn find_by_user_id_and_role(
+        &self,
+        user_id: &str,
+        role: &str,
+    ) -> Result<Option<Wallet>, sqlx::Error> {
+        let sql = format!("SELECT {WALLET_COLS} FROM wallets WHERE user_id = $1 AND role = $2");
         let row: Option<WalletRow> = sqlx::query_as(&sql)
             .bind(user_id)
+            .bind(role)
             .fetch_optional(&self.pool)
             .await?;
 
@@ -79,10 +95,10 @@ impl WalletRepository {
 
     pub async fn update(&self, wallet: &Wallet) -> Result<(), sqlx::Error> {
         let result = sqlx::query(
-            "UPDATE wallets SET active_balance_cents = $1, held_balance_cents = $2, version = version + 1 WHERE id = $3 AND version = $4",
+            "UPDATE wallets SET active_balance = $1, held_balance = $2, version = version + 1 WHERE id = $3 AND version = $4",
         )
-        .bind(wallet.active_balance().cents() as i64)
-        .bind(wallet.held_balance().cents() as i64)
+        .bind(wallet.active_balance().rupiah() as i64)
+        .bind(wallet.held_balance().rupiah() as i64)
         .bind(wallet.id())
         .bind(wallet.version())
         .execute(&self.pool)
@@ -135,9 +151,9 @@ impl WalletRepository {
 
         let wallet_tx = wallet.hold(amount).map_err(|e| e.to_string())?;
 
-        let result = sqlx::query("UPDATE wallets SET active_balance_cents = $1, held_balance_cents = $2, version = version + 1 WHERE id = $3 AND version = $4")
-            .bind(wallet.active_balance().cents() as i64)
-            .bind(wallet.held_balance().cents() as i64)
+        let result = sqlx::query("UPDATE wallets SET active_balance = $1, held_balance = $2, version = version + 1 WHERE id = $3 AND version = $4")
+            .bind(wallet.active_balance().rupiah() as i64)
+            .bind(wallet.held_balance().rupiah() as i64)
             .bind(wallet.id())
             .bind(wallet.version())
             .execute(&mut *tx)
@@ -148,11 +164,12 @@ impl WalletRepository {
             return Err("CONCURRENCY_CONFLICT: Wallet is being modified by another operation. Please try again.".to_string());
         }
 
-        sqlx::query("INSERT INTO wallet_transactions (id, user_id, transaction_type, amount_cents, correlation_id, source_service) VALUES ($1, $2, $3, $4, $5, $6)")
-            .bind(&wallet_tx.id)
-            .bind(&wallet_tx.user_id)
+        sqlx::query("INSERT INTO wallet_transactions (id, user_id, role, transaction_type, amount, correlation_id, source_service) VALUES ($1, $2, $3, $4, $5, $6, $7)")
+            .bind(transaction_id_for_insert(&wallet_tx))
+            .bind(wallet_tx.user_id.as_ref())
+            .bind(wallet_tx.role.as_ref())
             .bind(wallet_tx.transaction_type.as_str())
-            .bind(wallet_tx.amount.cents() as i64)
+            .bind(wallet_tx.amount.rupiah() as i64)
             .bind(&wallet_tx.correlation_id)
             .bind(&wallet_tx.source_service)
             .execute(&mut *tx)
@@ -165,7 +182,7 @@ impl WalletRepository {
             .bind(wallet_id)
             .bind(auction_id)
             .bind(bid_id)
-            .bind(amount.cents() as i64)
+            .bind(amount.rupiah() as i64)
             .bind(&status_str)
             .bind(expires_at)
             .execute(&mut *tx)
@@ -210,12 +227,12 @@ impl WalletRepository {
 
         let mut wallet = wallet_row.map(wallet_from_row).ok_or("Wallet not found")?;
 
-        let amount_money = Money::from_cents(hold.amount as u64);
+        let amount_money = Money::from_rupiah(hold.amount as u64);
         let wallet_tx = wallet.release(amount_money).map_err(|e| e.to_string())?;
 
-        let result = sqlx::query("UPDATE wallets SET active_balance_cents = $1, held_balance_cents = $2, version = version + 1 WHERE id = $3 AND version = $4")
-            .bind(wallet.active_balance().cents() as i64)
-            .bind(wallet.held_balance().cents() as i64)
+        let result = sqlx::query("UPDATE wallets SET active_balance = $1, held_balance = $2, version = version + 1 WHERE id = $3 AND version = $4")
+            .bind(wallet.active_balance().rupiah() as i64)
+            .bind(wallet.held_balance().rupiah() as i64)
             .bind(wallet.id())
             .bind(wallet.version())
             .execute(&mut *tx)
@@ -226,11 +243,12 @@ impl WalletRepository {
             return Err("CONCURRENCY_CONFLICT: Wallet is being modified by another operation. Please try again.".to_string());
         }
 
-        sqlx::query("INSERT INTO wallet_transactions (id, user_id, transaction_type, amount_cents, correlation_id, source_service) VALUES ($1, $2, $3, $4, $5, $6)")
-            .bind(&wallet_tx.id)
-            .bind(&wallet_tx.user_id)
+        sqlx::query("INSERT INTO wallet_transactions (id, user_id, role, transaction_type, amount, correlation_id, source_service) VALUES ($1, $2, $3, $4, $5, $6, $7)")
+            .bind(transaction_id_for_insert(&wallet_tx))
+            .bind(wallet_tx.user_id.as_ref())
+            .bind(wallet_tx.role.as_ref())
             .bind(wallet_tx.transaction_type.as_str())
-            .bind(wallet_tx.amount.cents() as i64)
+            .bind(wallet_tx.amount.rupiah() as i64)
             .bind(&wallet_tx.correlation_id)
             .bind(&wallet_tx.source_service)
             .execute(&mut *tx)
@@ -267,7 +285,10 @@ impl WalletRepository {
         let mut hold = Hold::try_from(hold_row)?;
 
         if hold.status != HoldStatus::Active {
-            return Ok(hold);
+            return Err(format!(
+                "HOLD_NOT_ACTIVE: hold {} is {:?}, expected ACTIVE for convert",
+                hold_id, hold.status
+            ));
         }
 
         let wallet_sql = format!("SELECT {WALLET_COLS} FROM wallets WHERE id = $1");
@@ -279,12 +300,12 @@ impl WalletRepository {
 
         let mut wallet = wallet_row.map(wallet_from_row).ok_or("Wallet not found")?;
 
-        let amount_money = Money::from_cents(hold.amount as u64);
+        let amount_money = Money::from_rupiah(hold.amount as u64);
         let wallet_tx = wallet.convert(amount_money).map_err(|e| e.to_string())?;
 
-        let result = sqlx::query("UPDATE wallets SET active_balance_cents = $1, held_balance_cents = $2, version = version + 1 WHERE id = $3 AND version = $4")
-            .bind(wallet.active_balance().cents() as i64)
-            .bind(wallet.held_balance().cents() as i64)
+        let result = sqlx::query("UPDATE wallets SET active_balance = $1, held_balance = $2, version = version + 1 WHERE id = $3 AND version = $4")
+            .bind(wallet.active_balance().rupiah() as i64)
+            .bind(wallet.held_balance().rupiah() as i64)
             .bind(wallet.id())
             .bind(wallet.version())
             .execute(&mut *tx)
@@ -295,11 +316,12 @@ impl WalletRepository {
             return Err("CONCURRENCY_CONFLICT: Wallet is being modified by another operation. Please try again.".to_string());
         }
 
-        sqlx::query("INSERT INTO wallet_transactions (id, user_id, transaction_type, amount_cents, correlation_id, source_service) VALUES ($1, $2, $3, $4, $5, $6)")
-            .bind(&wallet_tx.id)
-            .bind(&wallet_tx.user_id)
+        sqlx::query("INSERT INTO wallet_transactions (id, user_id, role, transaction_type, amount, correlation_id, source_service) VALUES ($1, $2, $3, $4, $5, $6, $7)")
+            .bind(transaction_id_for_insert(&wallet_tx))
+            .bind(wallet_tx.user_id.as_ref())
+            .bind(wallet_tx.role.as_ref())
             .bind(wallet_tx.transaction_type.as_str())
-            .bind(wallet_tx.amount.cents() as i64)
+            .bind(wallet_tx.amount.rupiah() as i64)
             .bind(&wallet_tx.correlation_id)
             .bind(&wallet_tx.source_service)
             .execute(&mut *tx)
@@ -337,6 +359,7 @@ impl WalletRepository {
         &self,
         payment_id: &str,
         user_id: &str,
+        role: &str,
         amount: Money,
         redirect_url: &str,
         va_number: Option<&str>,
@@ -344,11 +367,12 @@ impl WalletRepository {
     ) -> Result<PaymentIntent, sqlx::Error> {
         let now = chrono::Utc::now().to_rfc3339();
         sqlx::query(
-            "INSERT INTO wallet_payment_intents (id, user_id, amount_cents, status, redirect_url, va_number, payment_channel, created_at, updated_at) VALUES ($1, $2, $3, 'PENDING', $4, $5, $6, $7, $7)",
+            "INSERT INTO wallet_payment_intents (id, user_id, role, amount, status, redirect_url, va_number, payment_channel, created_at, updated_at) VALUES ($1, $2, $3, $4, 'PENDING', $5, $6, $7, $8, $8)",
         )
         .bind(payment_id)
         .bind(user_id)
-        .bind(amount.cents() as i64)
+        .bind(role)
+        .bind(amount.rupiah() as i64)
         .bind(redirect_url)
         .bind(va_number)
         .bind(payment_channel)
@@ -407,6 +431,7 @@ impl WalletRepository {
     pub async fn insert_withdrawal(
         &self,
         user_id: &str,
+        role: &str,
         amount: Money,
         bank_code: &str,
         account_number: &str,
@@ -415,11 +440,12 @@ impl WalletRepository {
     ) -> Result<WalletWithdrawal, sqlx::Error> {
         let withdrawal_id = uuid::Uuid::new_v4().to_string();
         sqlx::query(
-            "INSERT INTO wallet_withdrawals (id, user_id, amount_cents, bank_account, bank_code, account_number, account_name, payout_reference, status) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'PENDING')",
+            "INSERT INTO wallet_withdrawals (id, user_id, role, amount, bank_account, bank_code, account_number, account_name, payout_reference, status) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'PENDING')",
         )
         .bind(&withdrawal_id)
         .bind(user_id)
-        .bind(amount.cents() as i64)
+        .bind(role)
+        .bind(amount.rupiah() as i64)
         .bind(format!("{bank_code}:{account_number}"))
         .bind(bank_code)
         .bind(account_number)
@@ -475,12 +501,13 @@ impl TransactionRepository {
 
     pub async fn insert(&self, tx: &WalletTransaction) -> Result<(), sqlx::Error> {
         sqlx::query(
-            "INSERT INTO wallet_transactions (id, user_id, transaction_type, amount_cents, correlation_id, source_service) VALUES ($1, $2, $3, $4, $5, $6)",
+            "INSERT INTO wallet_transactions (id, user_id, role, transaction_type, amount, correlation_id, source_service) VALUES ($1, $2, $3, $4, $5, $6, $7)",
         )
-        .bind(&tx.id)
-        .bind(&tx.user_id)
+        .bind(transaction_id_for_insert(tx))
+        .bind(tx.user_id.as_ref())
+        .bind(tx.role.as_ref())
         .bind(tx.transaction_type.as_str())
-        .bind(tx.amount.cents() as i64)
+        .bind(tx.amount.rupiah() as i64)
         .bind(&tx.correlation_id)
         .bind(&tx.source_service)
         .execute(&self.pool)
@@ -488,15 +515,17 @@ impl TransactionRepository {
         Ok(())
     }
 
-    pub async fn find_by_user_id(
+    pub async fn find_by_user_id_and_role(
         &self,
         user_id: &str,
+        role: &str,
     ) -> Result<Vec<WalletTransaction>, sqlx::Error> {
         let sql = format!(
-            "SELECT {TX_COLS} FROM wallet_transactions WHERE user_id = $1 ORDER BY created_at DESC, id DESC"
+            "SELECT {TX_COLS} FROM wallet_transactions WHERE user_id = $1 AND role = $2 ORDER BY created_at DESC, id DESC"
         );
         let rows: Vec<TransactionRow> = sqlx::query_as(&sql)
             .bind(user_id)
+            .bind(role)
             .fetch_all(&self.pool)
             .await?;
 

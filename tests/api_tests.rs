@@ -935,6 +935,21 @@ async fn seller_escrow_credit_and_payout_settlement_moves_held_to_active() {
     assert_eq!(escrow_json["heldBalance"], 7500);
     assert_eq!(escrow_json["activeBalance"], 0);
 
+    let duplicate_escrow = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/seller-escrow")
+        .header("content-type", "application/json")
+        .header("X-Internal-Service-Token", "bidmart-local-internal-token")
+        .body(Body::from(
+            r#"{"sellerId":"seller-1","amount":7500,"correlationId":"auction-1"}"#,
+        ))
+        .unwrap();
+    let duplicate_escrow_resp = app.clone().oneshot(duplicate_escrow).await.unwrap();
+    assert_eq!(duplicate_escrow_resp.status(), StatusCode::OK);
+    let duplicate_escrow_json = body_to_json(duplicate_escrow_resp.into_body()).await;
+    assert_eq!(duplicate_escrow_json["heldBalance"], 7500);
+    assert_eq!(duplicate_escrow_json["activeBalance"], 0);
+
     let detail = Request::builder()
         .method("GET")
         .uri("/api/v1/wallet/seller-1/detail?role=SELLER")
@@ -944,11 +959,15 @@ async fn seller_escrow_credit_and_payout_settlement_moves_held_to_active() {
     assert_eq!(detail_resp.status(), StatusCode::OK);
     let detail_json = body_to_json(detail_resp.into_body()).await;
     let history = detail_json["history"].as_array().unwrap();
-    assert!(history.iter().any(|entry| {
-        entry["type"] == "SELLER_ESCROW"
-            && entry["amount"] == 7500
-            && entry["correlationId"] == "auction-1"
-    }));
+    let seller_escrow_entries = history
+        .iter()
+        .filter(|entry| {
+            entry["type"] == "SELLER_ESCROW"
+                && entry["amount"] == 7500
+                && entry["correlationId"] == "auction-1"
+        })
+        .count();
+    assert_eq!(seller_escrow_entries, 1);
 
     let payout = Request::builder()
         .method("POST")

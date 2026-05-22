@@ -1,4 +1,5 @@
 use sqlx::AnyPool;
+use uuid::Uuid;
 
 use crate::persistence::models::{
     HoldRow, PaymentIntentRow, ProvisioningEventRow, TransactionRow, WalletRow, WithdrawalRow,
@@ -51,6 +52,19 @@ fn transaction_id_for_insert(tx: &WalletTransaction) -> String {
     } else {
         tx.id.to_string()
     }
+}
+
+fn idempotent_transaction_id(
+    source_service: &str,
+    correlation_id: &str,
+    tx_type: TransactionType,
+) -> Uuid {
+    let key = format!("{source_service}:{correlation_id}:{}", tx_type.as_str());
+    Uuid::new_v5(&Uuid::NAMESPACE_URL, key.as_bytes())
+}
+
+fn is_unique_constraint_error(error: &sqlx::Error) -> bool {
+    matches!(error, sqlx::Error::Database(database_error) if database_error.is_unique_violation())
 }
 
 async fn insert_wallet_transaction_with_tx(
@@ -133,6 +147,90 @@ impl WalletRepository {
         let rows: Vec<WalletRow> = sqlx::query_as(&sql).fetch_all(&self.pool).await?;
 
         Ok(rows.into_iter().map(wallet_from_row).collect())
+    }
+
+    pub async fn credit_seller_escrow_idempotent(
+        &self,
+        seller_id: &str,
+        role: &str,
+        amount: Money,
+        correlation_id: Option<&str>,
+        source_service: &str,
+    ) -> Result<Wallet, String> {
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+
+        let wallet_sql =
+            format!("SELECT {WALLET_COLS} FROM wallets WHERE user_id = $1 AND role = $2");
+        let wallet_row: Option<WalletRow> = sqlx::query_as(&wallet_sql)
+            .bind(seller_id)
+            .bind(role)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let mut wallet = wallet_row.map(wallet_from_row).ok_or("Wallet not found")?;
+
+        if let Some(correlation_id) = correlation_id {
+            let existing_sql = format!(
+                "SELECT {TX_COLS} FROM wallet_transactions \
+                 WHERE source_service = $1 AND correlation_id = $2 AND transaction_type = $3 \
+                 LIMIT 1"
+            );
+            let existing: Option<TransactionRow> = sqlx::query_as(&existing_sql)
+                .bind(source_service)
+                .bind(correlation_id)
+                .bind(TransactionType::SellerEscrow.as_str())
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|e| e.to_string())?;
+            if existing.is_some() {
+                tx.commit().await.map_err(|e| e.to_string())?;
+                return Ok(wallet);
+            }
+        }
+
+        let mut wallet_tx = wallet
+            .credit_seller_escrow(amount)
+            .map_err(|e| e.to_string())?;
+        wallet_tx.correlation_id = correlation_id.map(str::to_string);
+        wallet_tx.source_service = Some(source_service.to_string());
+        if let Some(correlation_id) = correlation_id {
+            wallet_tx.id = idempotent_transaction_id(
+                source_service,
+                correlation_id,
+                TransactionType::SellerEscrow,
+            );
+        }
+
+        let result = sqlx::query(
+            "UPDATE wallets SET active_balance = $1, held_balance = $2, version = version + 1 WHERE id = $3 AND version = $4",
+        )
+        .bind(wallet.active_balance().rupiah() as i64)
+        .bind(wallet.held_balance().rupiah() as i64)
+        .bind(wallet.id())
+        .bind(wallet.version())
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        if result.rows_affected() == 0 {
+            return Err("CONCURRENCY_CONFLICT: Wallet is being modified by another operation. Please try again.".to_string());
+        }
+
+        if let Err(error) = insert_wallet_transaction_with_tx(&mut tx, &wallet_tx).await {
+            if is_unique_constraint_error(&error) {
+                drop(tx);
+                return self
+                    .find_by_user_id_and_role(seller_id, role)
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .ok_or_else(|| "Wallet not found".to_string());
+            }
+            return Err(error.to_string());
+        }
+
+        tx.commit().await.map_err(|e| e.to_string())?;
+        Ok(wallet)
     }
 
     pub async fn hold_funds(

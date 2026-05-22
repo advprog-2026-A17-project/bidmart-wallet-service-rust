@@ -585,14 +585,16 @@ impl WalletService {
             }
         }
 
-        self.mutate_wallet_with_metadata(
-            seller_id,
-            "SELLER",
-            correlation_id,
-            Some(AUCTION_SERVICE_SOURCE),
-            |w| w.credit_seller_escrow(amount),
-        )
-        .await
+        self.wallet_repo
+            .credit_seller_escrow_idempotent(
+                seller_id,
+                "SELLER",
+                amount,
+                correlation_id,
+                AUCTION_SERVICE_SOURCE,
+            )
+            .await
+            .map_err(ServiceError::HoldFailed)
     }
 
     /// Settles pending sale proceeds from held to active (used after order confirmation).

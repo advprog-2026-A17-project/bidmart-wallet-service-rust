@@ -119,6 +119,7 @@ async fn ensure_idempotency_columns(pool: &AnyPool) {
         "ALTER TABLE wallet_withdrawals ADD COLUMN idempotency_key TEXT",
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_wallet_payment_intents_idempotency ON wallet_payment_intents(user_id, role, idempotency_key) WHERE idempotency_key IS NOT NULL",
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_wallet_withdrawals_idempotency ON wallet_withdrawals(user_id, role, idempotency_key) WHERE idempotency_key IS NOT NULL",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_wallet_transactions_source_correlation_type ON wallet_transactions(source_service, correlation_id, transaction_type) WHERE source_service IS NOT NULL AND correlation_id IS NOT NULL",
     ];
 
     for statement in statements {

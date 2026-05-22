@@ -61,9 +61,6 @@ CREATE TABLE IF NOT EXISTS wallet_payment_intents (
 
 CREATE INDEX IF NOT EXISTS idx_wallet_payment_intents_user_id
     ON wallet_payment_intents(user_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_wallet_payment_intents_idempotency
-    ON wallet_payment_intents(user_id, role, idempotency_key)
-    WHERE idempotency_key IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS wallet_withdrawals (
     id           TEXT PRIMARY KEY,
@@ -84,6 +81,3 @@ CREATE TABLE IF NOT EXISTS wallet_withdrawals (
 
 CREATE INDEX IF NOT EXISTS idx_wallet_withdrawals_user_id
     ON wallet_withdrawals(user_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_wallet_withdrawals_idempotency
-    ON wallet_withdrawals(user_id, role, idempotency_key)
-    WHERE idempotency_key IS NOT NULL;

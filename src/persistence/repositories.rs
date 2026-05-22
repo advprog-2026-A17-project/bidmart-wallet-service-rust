@@ -428,6 +428,104 @@ impl WalletRepository {
         Ok(())
     }
 
+    pub async fn apply_payment_status(
+        &self,
+        payment_id: &str,
+        status: &str,
+    ) -> Result<PaymentIntent, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+
+        let payment_sql =
+            format!("SELECT {PAYMENT_COLS} FROM wallet_payment_intents WHERE id = $1");
+        let payment_row: Option<PaymentIntentRow> = sqlx::query_as(&payment_sql)
+            .bind(payment_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+
+        let payment = match payment_row {
+            Some(row) => PaymentIntent::from(row),
+            None => return Err(sqlx::Error::RowNotFound),
+        };
+
+        if payment.status != "PENDING" || status == "PENDING" {
+            tx.commit().await?;
+            return Ok(payment);
+        }
+
+        let updated_at = chrono::Utc::now().to_rfc3339();
+        let status_update = sqlx::query(
+            "UPDATE wallet_payment_intents SET status = $1, updated_at = $2 WHERE id = $3 AND status = 'PENDING'",
+        )
+        .bind(status)
+        .bind(updated_at)
+        .bind(payment_id)
+        .execute(&mut *tx)
+        .await?;
+
+        if status_update.rows_affected() == 0 {
+            tx.commit().await?;
+            return self
+                .find_payment_intent(payment_id)
+                .await?
+                .ok_or(sqlx::Error::RowNotFound);
+        }
+
+        let tx_type = match status {
+            "PAID" => Some(TransactionType::TopUp),
+            "FAILED" => Some(TransactionType::TopUpFailed),
+            "EXPIRED" => Some(TransactionType::TopUpExpired),
+            _ => None,
+        };
+
+        if let Some(tx_type) = tx_type {
+            if tx_type == TransactionType::TopUp {
+                let wallet_update = sqlx::query(
+                    "UPDATE wallets SET active_balance = active_balance + $1, \
+                     version = version + 1 WHERE user_id = $2 AND role = $3",
+                )
+                .bind(payment.amount)
+                .bind(&payment.user_id)
+                .bind(&payment.role)
+                .execute(&mut *tx)
+                .await?;
+
+                if wallet_update.rows_affected() == 0 {
+                    return Err(sqlx::Error::RowNotFound);
+                }
+            }
+
+            let wallet_tx = WalletTransaction::builder(
+                &payment.user_id,
+                &payment.role,
+                tx_type,
+                Money::from_rupiah(payment.amount as u64),
+            )
+            .correlation_id(payment_id)
+            .source_service("midtrans")
+            .build();
+
+            sqlx::query(
+                "INSERT INTO wallet_transactions \
+                 (id, user_id, role, transaction_type, amount, correlation_id, source_service) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            )
+                .bind(transaction_id_for_insert(&wallet_tx))
+                .bind(wallet_tx.user_id.as_ref())
+                .bind(wallet_tx.role.as_ref())
+                .bind(wallet_tx.transaction_type.as_str())
+                .bind(wallet_tx.amount.rupiah() as i64)
+                .bind(&wallet_tx.correlation_id)
+                .bind(&wallet_tx.source_service)
+                .execute(&mut *tx)
+                .await?;
+        }
+
+        tx.commit().await?;
+        self.find_payment_intent(payment_id)
+            .await?
+            .ok_or(sqlx::Error::RowNotFound)
+    }
+
     pub async fn insert_withdrawal(
         &self,
         user_id: &str,

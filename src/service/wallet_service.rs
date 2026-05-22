@@ -275,54 +275,15 @@ impl WalletService {
             return Err(ServiceError::InvalidPaymentStatus(normalized.to_string()));
         }
 
-        let payment = self
-            .wallet_repo
-            .find_payment_intent(payment_id)
-            .await?
-            .ok_or_else(|| ServiceError::TransactionNotFound(payment_id.to_string()))?;
-
-        if payment.status == "PENDING" && normalized != "PENDING" {
-            match normalized {
-                "PAID" => {
-                    self.top_up(
-                        &payment.user_id,
-                        &payment.role,
-                        Money::from_rupiah(payment.amount as u64),
-                    )
-                    .await?;
-                }
-                "FAILED" => {
-                    // Builder Pattern — atomic construction with optional fields
-                    self.record_status_transaction(
-                        &payment.user_id,
-                        &payment.role,
-                        TransactionType::TopUpFailed,
-                        Money::from_rupiah(payment.amount as u64),
-                        payment_id,
-                    )
-                    .await?;
-                }
-                "EXPIRED" => {
-                    self.record_status_transaction(
-                        &payment.user_id,
-                        &payment.role,
-                        TransactionType::TopUpExpired,
-                        Money::from_rupiah(payment.amount as u64),
-                        payment_id,
-                    )
-                    .await?;
-                }
-                _ => {}
-            }
-            self.wallet_repo
-                .update_payment_status(payment_id, normalized)
-                .await?;
-        }
-
         self.wallet_repo
-            .find_payment_intent(payment_id)
-            .await?
-            .ok_or_else(|| ServiceError::TransactionNotFound(payment_id.to_string()))
+            .apply_payment_status(payment_id, normalized)
+            .await
+            .map_err(|e| match e {
+                sqlx::Error::RowNotFound => {
+                    ServiceError::TransactionNotFound(payment_id.to_string())
+                }
+                other => ServiceError::Persistence(other),
+            })
     }
 
     async fn expire_payment_if_needed(

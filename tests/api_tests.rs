@@ -153,6 +153,44 @@ async fn midtrans_top_up_intent_returns_pending_payment_without_crediting_wallet
 }
 
 #[tokio::test]
+async fn top_up_intent_idempotency_key_returns_original_payment() {
+    let app = setup_app().await;
+
+    let create = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/add")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"userId":"user-1"}"#))
+        .unwrap();
+    let _ = app.clone().oneshot(create).await.unwrap();
+
+    let first = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/user-1/top-up/intent")
+        .header("content-type", "application/json")
+        .header("Idempotency-Key", "topup-key-1")
+        .body(Body::from(r#"{"amount":5000}"#))
+        .unwrap();
+    let first_resp = app.clone().oneshot(first).await.unwrap();
+    assert_eq!(first_resp.status(), StatusCode::CREATED);
+    let first_json = body_to_json(first_resp.into_body()).await;
+
+    let second = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/user-1/top-up/intent")
+        .header("content-type", "application/json")
+        .header("Idempotency-Key", "topup-key-1")
+        .body(Body::from(r#"{"amount":5000}"#))
+        .unwrap();
+    let second_resp = app.oneshot(second).await.unwrap();
+    assert_eq!(second_resp.status(), StatusCode::CREATED);
+    let second_json = body_to_json(second_resp.into_body()).await;
+
+    assert_eq!(second_json["paymentId"], first_json["paymentId"]);
+    assert_eq!(second_json["amount"], first_json["amount"]);
+}
+
+#[tokio::test]
 async fn wallet_detail_exposes_unpaid_payment_history_and_payment_detail_expires() {
     let (app, pool) = setup_app_with_pool().await;
 
@@ -168,9 +206,7 @@ async fn wallet_detail_exposes_unpaid_payment_history_and_payment_detail_expires
         .method("POST")
         .uri("/api/v1/wallet/user-1/top-up/intent")
         .header("content-type", "application/json")
-        .body(Body::from(
-            r#"{"amount":5000,"paymentMethod":"bca_va"}"#,
-        ))
+        .body(Body::from(r#"{"amount":5000,"paymentMethod":"bca_va"}"#))
         .unwrap();
     let intent_resp = app.clone().oneshot(intent).await.unwrap();
     assert_eq!(intent_resp.status(), StatusCode::CREATED);
@@ -652,6 +688,62 @@ async fn midtrans_failed_withdrawal_reverses_reserved_balance() {
         .map(|entry| entry["type"].as_str().unwrap())
         .collect();
     assert!(types.contains(&"WITHDRAW_FAILED"));
+}
+
+#[tokio::test]
+async fn withdrawal_idempotency_key_returns_original_withdrawal_without_second_debit() {
+    let app = setup_app().await;
+
+    let create = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/add")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"userId":"user-1"}"#))
+        .unwrap();
+    let _ = app.clone().oneshot(create).await.unwrap();
+
+    let topup = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/user-1/top-up?amount=10000")
+        .body(Body::empty())
+        .unwrap();
+    let _ = app.clone().oneshot(topup).await.unwrap();
+
+    let first = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/user-1/withdrawals")
+        .header("content-type", "application/json")
+        .header("Idempotency-Key", "withdraw-key-1")
+        .body(Body::from(
+            r#"{"amount":3000,"bankCode":"bca","accountNumber":"1234567890"}"#,
+        ))
+        .unwrap();
+    let first_resp = app.clone().oneshot(first).await.unwrap();
+    assert_eq!(first_resp.status(), StatusCode::CREATED);
+    let first_json = body_to_json(first_resp.into_body()).await;
+
+    let second = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/user-1/withdrawals")
+        .header("content-type", "application/json")
+        .header("Idempotency-Key", "withdraw-key-1")
+        .body(Body::from(
+            r#"{"amount":3000,"bankCode":"bca","accountNumber":"1234567890"}"#,
+        ))
+        .unwrap();
+    let second_resp = app.clone().oneshot(second).await.unwrap();
+    assert_eq!(second_resp.status(), StatusCode::CREATED);
+    let second_json = body_to_json(second_resp.into_body()).await;
+
+    assert_eq!(second_json["withdrawalId"], first_json["withdrawalId"]);
+
+    let balance = Request::builder()
+        .uri("/api/v1/wallet/user-1")
+        .body(Body::empty())
+        .unwrap();
+    let balance_resp = app.oneshot(balance).await.unwrap();
+    let balance_json = body_to_json(balance_resp.into_body()).await;
+    assert_eq!(balance_json["activeBalance"], 7000);
 }
 
 // ── POST /api/v1/wallet/{userId}/trybid ──────────────────────────

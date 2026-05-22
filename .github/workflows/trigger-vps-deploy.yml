@@ -1,9 +1,11 @@
 name: Trigger VPS deploy
 
+# Auto: staging branch only. Production VPS is promoted manually from bidmart-infrastructure.
+
 on:
   workflow_run:
     workflows: ["Continuous Integration"]
-    branches: [staging, main]
+    branches: [staging]
     types: [completed]
   workflow_dispatch:
     inputs:
@@ -34,24 +36,29 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             target="${INPUT_TARGET:-staging}"
             branch="${{ github.ref_name }}"
-          elif [ "$WORKFLOW_RUN_BRANCH" = "main" ]; then
-            target=prod
-            branch="$WORKFLOW_RUN_BRANCH"
           else
             target=staging
-            branch="$WORKFLOW_RUN_BRANCH"
+            branch="${WORKFLOW_RUN_BRANCH:-staging}"
+          fi
+          if [ "$target" = "prod" ] && [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            echo "::error::Production VPS deploy is manual. Run Deploy production VPS in bidmart-infrastructure with confirm_promotion=promote."
+            exit 1
           fi
           if [ "$target" != "prod" ] && [ "$target" != "staging" ]; then
             target=staging
+          fi
+          if [ "$target" = "prod" ]; then
+            branch=main
           fi
           echo "target=$target" >> "$GITHUB_OUTPUT"
           echo "branch=$branch" >> "$GITHUB_OUTPUT"
           echo "Triggering VPS deploy: $target (branch=$branch)"
 
       - name: Trigger infrastructure VPS deploy
+        if: steps.resolve.outputs.target == 'staging'
         env:
           GH_TOKEN: ${{ secrets.VPS_DEPLOY_DISPATCH_TOKEN }}
-          EVENT_TYPE: deploy-vps-${{ steps.resolve.outputs.target }}
+          EVENT_TYPE: deploy-vps-staging
           DEPLOY_BRANCH: ${{ steps.resolve.outputs.branch }}
         run: |
           if [ -z "$GH_TOKEN" ]; then
@@ -61,3 +68,10 @@ jobs:
           gh api repos/advprog-2026-A17-project/bidmart-infrastructure/dispatches \
             -f event_type="$EVENT_TYPE" \
             -f "client_payload[branch]=$DEPLOY_BRANCH"
+
+      - name: Point to manual production promotion
+        if: steps.resolve.outputs.target == 'prod'
+        run: |
+          echo "Production VPS is not dispatched from service repos."
+          echo "Run workflow 'Deploy production VPS' in bidmart-infrastructure:"
+          echo "  confirm_promotion=promote, branch=main"

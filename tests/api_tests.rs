@@ -952,6 +952,41 @@ async fn seller_escrow_credit_and_payout_settlement_moves_held_to_active() {
 }
 
 #[tokio::test]
+async fn seller_payout_credits_active_balance_when_escrow_is_missing() {
+    let app = setup_app().await;
+
+    let payout = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/payout")
+        .header("content-type", "application/json")
+        .header("X-Internal-Service-Token", "bidmart-local-internal-token")
+        .body(Body::from(
+            r#"{"sellerId":"seller-missing-escrow","amount":7500,"orderId":"order-missing-escrow"}"#,
+        ))
+        .unwrap();
+    let payout_resp = app.clone().oneshot(payout).await.unwrap();
+    assert_eq!(payout_resp.status(), StatusCode::OK);
+    let payout_json = body_to_json(payout_resp.into_body()).await;
+    assert_eq!(payout_json["heldBalance"], 0);
+    assert_eq!(payout_json["activeBalance"], 7500);
+
+    let duplicate = Request::builder()
+        .method("POST")
+        .uri("/api/v1/wallet/payout")
+        .header("content-type", "application/json")
+        .header("X-Internal-Service-Token", "bidmart-local-internal-token")
+        .body(Body::from(
+            r#"{"sellerId":"seller-missing-escrow","amount":7500,"orderId":"order-missing-escrow"}"#,
+        ))
+        .unwrap();
+    let duplicate_resp = app.clone().oneshot(duplicate).await.unwrap();
+    assert_eq!(duplicate_resp.status(), StatusCode::OK);
+    let duplicate_json = body_to_json(duplicate_resp.into_body()).await;
+    assert_eq!(duplicate_json["heldBalance"], 0);
+    assert_eq!(duplicate_json["activeBalance"], 7500);
+}
+
+#[tokio::test]
 async fn concurrent_top_up_and_hold_do_not_produce_negative_balance() {
     let app = setup_app().await;
 

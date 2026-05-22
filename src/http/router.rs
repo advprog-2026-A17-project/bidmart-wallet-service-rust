@@ -271,7 +271,10 @@ async fn credit_seller_escrow(
 ) -> impl IntoResponse {
     require_internal_token(&headers)?;
     let amount = Money::from_rupiah(req.amount);
-    match svc.credit_seller_escrow(&req.seller_id, amount).await {
+    match svc
+        .credit_seller_escrow(&req.seller_id, amount, req.correlation_id.as_deref())
+        .await
+    {
         Ok(wallet) => Ok(Json(WalletResponse::from(&wallet))),
         Err(e) => Err(map_error(e)),
     }
@@ -284,7 +287,10 @@ async fn payout_seller(
 ) -> impl IntoResponse {
     require_internal_token(&headers)?;
     let amount = Money::from_rupiah(req.amount);
-    match svc.settle_seller_escrow(&req.seller_id, amount).await {
+    match svc
+        .release_seller_payout(&req.seller_id, amount, req.order_id.as_deref())
+        .await
+    {
         Ok(wallet) => {
             METRICS.record_operation("payout");
             Ok(Json(WalletResponse::from(&wallet)))

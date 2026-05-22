@@ -12,6 +12,9 @@ use crate::wallet::{
     WalletWithdrawal,
 };
 
+const AUCTION_SERVICE_SOURCE: &str = "auction-service";
+const ORDER_SERVICE_SOURCE: &str = "order-service";
+
 // ── ServiceError ────────────────────────────────────────────────
 
 /// Service-level error combining domain and persistence failures.
@@ -552,19 +555,44 @@ impl WalletService {
         &self,
         seller_id: &str,
         amount: Money,
+        correlation_id: Option<&str>,
     ) -> Result<Wallet, ServiceError> {
-        if self
+        let wallet = if let Some(wallet) = self
             .wallet_repo
             .find_by_user_id_and_role(seller_id, "SELLER")
             .await?
-            .is_none()
         {
+            wallet
+        } else {
             let wallet = Wallet::new(seller_id, "SELLER");
             self.wallet_repo.insert(&wallet).await?;
+            wallet
+        };
+
+        let correlation_id = normalized_correlation_id(correlation_id);
+        if let Some(correlation_id) = correlation_id {
+            if self
+                .tx_repo
+                .find_by_source_correlation_and_type(
+                    AUCTION_SERVICE_SOURCE,
+                    correlation_id,
+                    TransactionType::SellerEscrow,
+                )
+                .await?
+                .is_some()
+            {
+                return Ok(wallet);
+            }
         }
 
-        self.mutate_wallet(seller_id, "SELLER", |w| w.credit_seller_escrow(amount))
-            .await
+        self.mutate_wallet_with_metadata(
+            seller_id,
+            "SELLER",
+            correlation_id,
+            Some(AUCTION_SERVICE_SOURCE),
+            |w| w.credit_seller_escrow(amount),
+        )
+        .await
     }
 
     /// Settles pending sale proceeds from held to active (used after order confirmation).
@@ -589,12 +617,56 @@ impl WalletService {
             .await
     }
 
+    pub async fn release_seller_payout(
+        &self,
+        seller_id: &str,
+        amount: Money,
+        order_id: Option<&str>,
+    ) -> Result<Wallet, ServiceError> {
+        let wallet = if let Some(wallet) = self
+            .wallet_repo
+            .find_by_user_id_and_role(seller_id, "SELLER")
+            .await?
+        {
+            wallet
+        } else {
+            let wallet = Wallet::new(seller_id, "SELLER");
+            self.wallet_repo.insert(&wallet).await?;
+            wallet
+        };
+
+        let order_id = normalized_correlation_id(order_id);
+        if let Some(order_id) = order_id {
+            if self
+                .tx_repo
+                .find_by_source_correlation_and_type(
+                    ORDER_SERVICE_SOURCE,
+                    order_id,
+                    TransactionType::SellerEscrowSettle,
+                )
+                .await?
+                .is_some()
+            {
+                return Ok(wallet);
+            }
+        }
+
+        self.mutate_wallet_with_metadata(
+            seller_id,
+            "SELLER",
+            order_id,
+            Some(ORDER_SERVICE_SOURCE),
+            |w| w.release_seller_payout(amount),
+        )
+        .await
+    }
+
     pub async fn payout_to_seller(
         &self,
         seller_id: &str,
         amount: Money,
     ) -> Result<Wallet, ServiceError> {
-        self.settle_seller_escrow(seller_id, amount).await
+        self.release_seller_payout(seller_id, amount, None).await
     }
 
     // ── Provisioning ─────────────────────────────────────────────
@@ -678,6 +750,23 @@ impl WalletService {
         Ok(wallet)
     }
 
+    async fn mutate_wallet_with_metadata(
+        &self,
+        user_id: &str,
+        role: &str,
+        correlation_id: Option<&str>,
+        source_service: Option<&str>,
+        operation: impl FnOnce(&mut Wallet) -> Result<WalletTransaction, WalletError>,
+    ) -> Result<Wallet, ServiceError> {
+        let mut wallet = self.find_by_user_id_and_role(user_id, role).await?;
+        let mut tx = operation(&mut wallet)?;
+        tx.correlation_id = correlation_id.map(str::to_string);
+        tx.source_service = source_service.map(str::to_string);
+        self.tx_repo.insert(&tx).await?;
+        self.wallet_repo.update(&wallet).await?;
+        Ok(wallet)
+    }
+
     /// Records a status transaction using the Builder Pattern.
     async fn record_status_transaction(
         &self,
@@ -753,6 +842,10 @@ fn normalize_idempotency_key(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|value| value.chars().take(128).collect())
+}
+
+fn normalized_correlation_id(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
 }
 
 fn idempotent_operation_id(prefix: &str, user_id: &str, role: &str, key: &str) -> String {

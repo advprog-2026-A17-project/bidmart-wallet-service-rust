@@ -681,6 +681,27 @@ impl TransactionRepository {
 
         Ok(row.map(transaction_from_row))
     }
+
+    pub async fn find_by_source_correlation_and_type(
+        &self,
+        source_service: &str,
+        correlation_id: &str,
+        tx_type: TransactionType,
+    ) -> Result<Option<WalletTransaction>, sqlx::Error> {
+        let sql = format!(
+            "SELECT {TX_COLS} FROM wallet_transactions \
+             WHERE source_service = $1 AND correlation_id = $2 AND transaction_type = $3 \
+             ORDER BY created_at DESC, id DESC LIMIT 1"
+        );
+        let row: Option<TransactionRow> = sqlx::query_as(&sql)
+            .bind(source_service)
+            .bind(correlation_id)
+            .bind(tx_type.as_str())
+            .fetch_optional(&self.pool)
+            .await?;
+
+        Ok(row.map(transaction_from_row))
+    }
 }
 
 // ── ProvisioningEventRepository ─────────────────────────────────

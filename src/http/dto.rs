@@ -8,6 +8,7 @@ use crate::wallet::{PaymentIntent, Wallet, WalletTransaction, WalletWithdrawal};
 #[serde(rename_all = "camelCase")]
 pub struct WalletCreateRequest {
     pub user_id: String,
+    pub role: Option<String>,
     pub active_balance: Option<u64>,
     pub held_balance: Option<u64>,
 }
@@ -16,6 +17,7 @@ pub struct WalletCreateRequest {
 #[serde(rename_all = "camelCase")]
 pub struct HoldFundsRequest {
     pub user_id: String,
+    pub role: Option<String>,
     pub hold_id: String,
     pub auction_id: String,
     pub bid_id: String,
@@ -36,21 +38,49 @@ pub struct ConvertFundsRequest {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PayoutSellerRequest {
+    pub seller_id: String,
+    #[serde(alias = "amountCents")]
+    pub amount: u64,
+    pub order_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SellerEscrowRequest {
+    pub seller_id: String,
+    #[serde(alias = "amountCents")]
+    pub amount: u64,
+    pub correlation_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct AmountQuery {
     pub amount: u64,
+    pub role: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RoleQuery {
+    pub role: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PaymentIntentRequest {
-    pub amount_cents: u64,
+    #[serde(alias = "amountCents")]
+    pub amount: u64,
+    pub role: Option<String>,
     pub payment_method: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WithdrawalRequest {
-    pub amount_cents: u64,
+    #[serde(alias = "amountCents")]
+    pub amount: u64,
+    pub role: Option<String>,
     pub bank_code: String,
     pub account_number: String,
 }
@@ -78,6 +108,7 @@ pub struct MidtransPaymentReturnRequest {
 pub struct WalletResponse {
     pub id: String,
     pub user_id: String,
+    pub role: String,
     pub active_balance: u64,
     pub held_balance: u64,
 }
@@ -87,6 +118,7 @@ pub struct WalletResponse {
 pub struct WalletTransactionResponse {
     pub id: String,
     pub user_id: String,
+    pub role: String,
     #[serde(rename = "type")]
     pub transaction_type: String,
     pub amount: u64,
@@ -133,7 +165,8 @@ pub struct StructuredErrorResponse {
 #[serde(rename_all = "camelCase")]
 pub struct PaymentIntentResponse {
     pub payment_id: String,
-    pub amount_cents: u64,
+    pub amount: u64,
+    pub role: String,
     pub status: String,
     pub redirect_url: String,
     pub va_number: Option<String>,
@@ -147,7 +180,8 @@ pub struct PaymentIntentResponse {
 #[serde(rename_all = "camelCase")]
 pub struct WithdrawalResponse {
     pub withdrawal_id: String,
-    pub amount_cents: u64,
+    pub amount: u64,
+    pub role: String,
     pub status: String,
     pub bank_code: Option<String>,
     pub account_number: Option<String>,
@@ -162,8 +196,9 @@ impl From<&Wallet> for WalletResponse {
         Self {
             id: w.id().to_string(),
             user_id: w.user_id().to_string(),
-            active_balance: w.active_balance().cents(),
-            held_balance: w.held_balance().cents(),
+            role: w.role().to_string(),
+            active_balance: w.active_balance().rupiah(),
+            held_balance: w.held_balance().rupiah(),
         }
     }
 }
@@ -171,10 +206,11 @@ impl From<&Wallet> for WalletResponse {
 impl From<&WalletTransaction> for WalletTransactionResponse {
     fn from(tx: &WalletTransaction) -> Self {
         Self {
-            id: tx.id.clone(),
-            user_id: tx.user_id.clone(),
+            id: tx.id.to_string(),
+            user_id: tx.user_id.to_string(),
+            role: tx.role.to_string(),
             transaction_type: tx.transaction_type.as_str().to_string(),
-            amount: tx.amount.cents(),
+            amount: tx.amount.rupiah(),
             timestamp: tx.created_at.clone().unwrap_or_default(),
             correlation_id: tx.correlation_id.clone(),
             source_service: tx.source_service.clone(),
@@ -190,7 +226,7 @@ impl From<&crate::wallet::Hold> for HoldResponse {
             auction_id: h.auction_id.clone(),
             bid_id: h.bid_id.clone(),
             amount: h.amount as u64,
-            status: h.status.to_string(), // Menggunakan trait Display yang baru kita buat
+            status: h.status.to_string(),
             expires_at: h.expires_at.clone(),
             created_at: h.created_at.clone(),
             updated_at: h.updated_at.clone(),
@@ -202,7 +238,8 @@ impl From<&PaymentIntent> for PaymentIntentResponse {
     fn from(payment: &PaymentIntent) -> Self {
         Self {
             payment_id: payment.id.clone(),
-            amount_cents: payment.amount_cents as u64,
+            amount: payment.amount as u64,
+            role: payment.role.clone(),
             status: payment.status.clone(),
             redirect_url: payment.redirect_url.clone(),
             va_number: payment.va_number.clone(),
@@ -218,7 +255,8 @@ impl From<&WalletWithdrawal> for WithdrawalResponse {
     fn from(withdrawal: &WalletWithdrawal) -> Self {
         Self {
             withdrawal_id: withdrawal.id.clone(),
-            amount_cents: withdrawal.amount_cents as u64,
+            amount: withdrawal.amount as u64,
+            role: withdrawal.role.clone(),
             status: withdrawal.status.clone(),
             bank_code: withdrawal.bank_code.clone(),
             account_number: withdrawal.account_number.clone(),

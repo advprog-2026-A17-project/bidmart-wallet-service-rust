@@ -1,17 +1,20 @@
 use std::sync::Arc;
 
 use axum::extract::{Path, Query, State};
+use axum::middleware::from_fn;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 
 use crate::http::dto::*;
+use crate::http::metrics::{self, METRICS};
+use crate::http::metrics_auth::require_metrics_basic_auth;
 use crate::service::wallet_service::{ServiceError, WalletService};
 use crate::wallet::{Money, WalletError};
 
 type AppState = Arc<WalletService>;
-const DEFAULT_INTERNAL_TOKEN: &str = "local-dev-internal-token";
+const DEFAULT_INTERNAL_TOKEN: &str = "bidmart-local-internal-token";
 
 pub fn create_router(service: WalletService) -> Router {
     let state: AppState = Arc::new(service);
@@ -21,6 +24,8 @@ pub fn create_router(service: WalletService) -> Router {
         .route("/hold", post(hold_funds))
         .route("/release", post(release_funds))
         .route("/convert", post(convert_funds))
+        .route("/seller-escrow", post(credit_seller_escrow))
+        .route("/payout", post(payout_seller))
         .route("/:userId", get(get_wallet))
         .route("/:userId/detail", get(get_wallet_detail))
         .route("/:userId/payments/:paymentId", get(get_payment_intent))
@@ -41,13 +46,28 @@ pub fn create_router(service: WalletService) -> Router {
         )
         .with_state(state);
 
-    Router::new().nest("/api/v1/wallet", wallet_routes)
+    Router::new()
+        .route("/metrics", get(metrics).layer(from_fn(require_metrics_basic_auth)))
+        .nest("/api/v1/wallet", wallet_routes)
+        .layer(from_fn(metrics::record_http_metrics))
+}
+
+async fn metrics() -> impl IntoResponse {
+    (
+        [("content-type", "text/plain; version=0.0.4; charset=utf-8")],
+        metrics::render_prometheus_body(metrics::service_uptime_seconds()),
+    )
 }
 
 // ── Handlers ────────────────────────────────────────────────────
 
-async fn get_wallet(State(svc): State<AppState>, Path(user_id): Path<String>) -> impl IntoResponse {
-    match svc.find_by_user_id(&user_id).await {
+async fn get_wallet(
+    State(svc): State<AppState>,
+    Path(user_id): Path<String>,
+    Query(q): Query<RoleQuery>,
+) -> impl IntoResponse {
+    let role = q.role.as_deref().unwrap_or("BUYER");
+    match svc.ensure_wallet(&user_id, role).await {
         Ok(w) => Ok(Json(WalletResponse::from(&w))),
         Err(e) => Err(map_error(e)),
     }
@@ -56,13 +76,15 @@ async fn get_wallet(State(svc): State<AppState>, Path(user_id): Path<String>) ->
 async fn get_wallet_detail(
     State(svc): State<AppState>,
     Path(user_id): Path<String>,
+    Query(q): Query<RoleQuery>,
 ) -> impl IntoResponse {
-    let wallet = match svc.find_by_user_id(&user_id).await {
+    let role = q.role.as_deref().unwrap_or("BUYER");
+    let wallet = match svc.ensure_wallet(&user_id, role).await {
         Ok(w) => w,
         Err(e) => return Err(map_error(e)),
     };
 
-    let history = match svc.get_transaction_history(&user_id).await {
+    let history = match svc.get_transaction_history(&user_id, role).await {
         Ok(h) => h,
         Err(e) => return Err(map_error(e)),
     };
@@ -94,7 +116,8 @@ async fn add_wallet(
     State(svc): State<AppState>,
     Json(req): Json<WalletCreateRequest>,
 ) -> impl IntoResponse {
-    match svc.create_wallet(&req.user_id).await {
+    let role = req.role.as_deref().unwrap_or("BUYER");
+    match svc.create_wallet(&req.user_id, role).await {
         Ok(w) => Ok(Json(WalletResponse::from(&w))),
         Err(e) => Err(map_error(e)),
     }
@@ -105,8 +128,15 @@ async fn top_up(
     Path(user_id): Path<String>,
     Query(q): Query<AmountQuery>,
 ) -> impl IntoResponse {
-    match svc.top_up(&user_id, Money::from_cents(q.amount)).await {
-        Ok(w) => Ok(Json(WalletResponse::from(&w))),
+    let role = q.role.as_deref().unwrap_or("BUYER");
+    match svc
+        .top_up(&user_id, role, Money::from_rupiah(q.amount))
+        .await
+    {
+        Ok(w) => {
+            METRICS.record_operation("top_up");
+            Ok(Json(WalletResponse::from(&w)))
+        }
         Err(e) => Err(map_error(e)),
     }
 }
@@ -116,10 +146,12 @@ async fn create_top_up_intent(
     Path(user_id): Path<String>,
     Json(req): Json<PaymentIntentRequest>,
 ) -> impl IntoResponse {
+    let role = req.role.as_deref().unwrap_or("BUYER");
     match svc
         .create_top_up_intent(
             &user_id,
-            Money::from_cents(req.amount_cents),
+            role,
+            Money::from_rupiah(req.amount),
             req.payment_method.as_deref(),
         )
         .await
@@ -173,19 +205,23 @@ async fn hold_funds(
     Json(req): Json<HoldFundsRequest>,
 ) -> impl IntoResponse {
     require_internal_token(&headers)?;
-    // Kita akan memanggil metode hold_funds di Service yang meneruskan semua data
+    let role = req.role.as_deref().unwrap_or("BUYER");
     match svc
         .hold_funds(
             &req.user_id,
+            role,
             &req.auction_id,
             &req.bid_id,
-            Money::from_cents(req.amount),
+            Money::from_rupiah(req.amount),
             &req.hold_id,
             &req.expires_at,
         )
         .await
     {
-        Ok(hold) => Ok(Json(HoldResponse::from(&hold))),
+        Ok(hold) => {
+            METRICS.record_operation("hold");
+            Ok(Json(HoldResponse::from(&hold)))
+        }
         Err(e) => Err(map_error(e)),
     }
 }
@@ -214,13 +250,46 @@ async fn convert_funds(
     }
 }
 
+async fn credit_seller_escrow(
+    State(svc): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<SellerEscrowRequest>,
+) -> impl IntoResponse {
+    require_internal_token(&headers)?;
+    let amount = Money::from_rupiah(req.amount);
+    match svc.credit_seller_escrow(&req.seller_id, amount).await {
+        Ok(wallet) => Ok(Json(WalletResponse::from(&wallet))),
+        Err(e) => Err(map_error(e)),
+    }
+}
+
+async fn payout_seller(
+    State(svc): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<PayoutSellerRequest>,
+) -> impl IntoResponse {
+    require_internal_token(&headers)?;
+    let amount = Money::from_rupiah(req.amount);
+    match svc.settle_seller_escrow(&req.seller_id, amount).await {
+        Ok(wallet) => {
+            METRICS.record_operation("payout");
+            Ok(Json(WalletResponse::from(&wallet)))
+        }
+        Err(e) => Err(map_error(e)),
+    }
+}
+
 async fn try_bid(
     State(svc): State<AppState>,
     Path(user_id): Path<String>,
     Query(q): Query<AmountQuery>,
 ) -> impl IntoResponse {
-    match svc.bid(&user_id, Money::from_cents(q.amount)).await {
-        Ok(w) => Ok(Json(WalletResponse::from(&w))),
+    let role = q.role.as_deref().unwrap_or("BUYER");
+    match svc.bid(&user_id, role, Money::from_rupiah(q.amount)).await {
+        Ok(w) => {
+            METRICS.record_operation("try_bid");
+            Ok(Json(WalletResponse::from(&w)))
+        }
         Err(e) => Err(map_error(e)),
     }
 }
@@ -230,7 +299,11 @@ async fn withdraw(
     Path(user_id): Path<String>,
     Query(q): Query<AmountQuery>,
 ) -> impl IntoResponse {
-    match svc.withdraw(&user_id, Money::from_cents(q.amount)).await {
+    let role = q.role.as_deref().unwrap_or("BUYER");
+    match svc
+        .withdraw(&user_id, role, Money::from_rupiah(q.amount))
+        .await
+    {
         Ok(w) => Ok(Json(WalletResponse::from(&w))),
         Err(e) => Err(map_error(e)),
     }
@@ -241,10 +314,12 @@ async fn create_withdrawal(
     Path(user_id): Path<String>,
     Json(req): Json<WithdrawalRequest>,
 ) -> impl IntoResponse {
+    let role = req.role.as_deref().unwrap_or("BUYER");
     match svc
         .create_withdrawal(
             &user_id,
-            Money::from_cents(req.amount_cents),
+            role,
+            Money::from_rupiah(req.amount),
             &req.bank_code,
             &req.account_number,
         )
@@ -298,7 +373,7 @@ fn require_internal_token(
 
 fn map_error(e: ServiceError) -> (StatusCode, Json<StructuredErrorResponse>) {
     let (status, code, message) = match &e {
-        ServiceError::WalletNotFound(_) => {
+        ServiceError::WalletNotFound(_, _) => {
             (StatusCode::NOT_FOUND, "WALLET_NOT_FOUND", e.to_string())
         }
         ServiceError::Domain(wallet_err) => {
@@ -323,6 +398,8 @@ fn map_error(e: ServiceError) -> (StatusCode, Json<StructuredErrorResponse>) {
         ServiceError::HoldFailed(msg) => {
             let code = if msg.contains("Insufficient active balance") {
                 "INSUFFICIENT_ACTIVE_BALANCE"
+            } else if msg.contains("HOLD_NOT_ACTIVE") {
+                "HOLD_NOT_ACTIVE"
             } else {
                 "HOLD_OPERATION_FAILED"
             };

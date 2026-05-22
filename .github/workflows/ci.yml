@@ -1,10 +1,8 @@
 name: Continuous Integration
 
 on:
-  pull_request:
-    branches: ["ci-cd", "staging", "main"]
   push:
-    branches: ["ci-cd", "staging", "main"]
+  pull_request:
 
 jobs:
   test:
@@ -22,7 +20,16 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run Tests
-        run: cargo test --locked
+        env:
+          MIDTRANS_SERVER_KEY: SB-Mid-server-local
+        run: cargo test --locked -- --nocapture 2>&1 | tee test-output.log
+
+      - name: Upload Rust Test Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wallet-service-test-log
+          path: test-output.log
 
   sonarcloud:
     name: SonarCloud Code Analysis
